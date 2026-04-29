@@ -253,7 +253,7 @@ export default function EventDetailPage() {
                                     const isHeldOut = available <= 0 && held > 0
                                     const isSoldOut = available <= 0 && held === 0 && capacity > 0
                                     const minPerOrder = tt.min_per_order || 1
-                                    const maxPerOrder = tt.max_per_order || 10
+                                    const maxPerOrder = tt.max_per_order > 0 ? tt.max_per_order : available
 
                                     return (
                                         <div key={tt.id} className="group bg-app-surface border border-app-border p-4 rounded-[1.25rem] hover:border-brand-400/40 hover:shadow-organic transition-all duration-300 relative overflow-hidden">
