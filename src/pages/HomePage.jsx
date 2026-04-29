@@ -144,7 +144,8 @@ export default function HomePage() {
                                         const total     = ev.total_capacity || 0
                                         const remaining = ev.total_remaining || 0
                                         const percent   = total > 0 ? Math.min(100, ((sold + held) / total) * 100) : 0
-                                        const dateInfo  = formatDate(ev.start?.date)
+                                        const dateInfo  = formatDate(ev.start?.unix)
+                                        const endInfo   = formatDate(ev.end?.unix)
                                         const price     = getLowestPrice(ev.ticket_types)
 
                                         const isSoldOut   = total > 0 && remaining === 0 && held === 0
@@ -173,6 +174,7 @@ export default function HomePage() {
                                                         <div className="absolute top-3 left-3 bg-app-surface/90 backdrop-blur-sm border border-app-border/50 shadow-sm rounded-lg px-3 py-1.5 text-center">
                                                             <p className="font-outfit text-sm font-bold text-app-text leading-tight">{dateInfo.day}</p>
                                                             <p className="text-[9px] font-bold text-brand-600 uppercase tracking-widest">{dateInfo.month}</p>
+                                                            {ev.start?.time && <p className="text-[9px] font-semibold text-app-text-muted mt-0.5">{ev.start.time} UTC</p>}
                                                         </div>
                                                     )}
 
@@ -203,7 +205,13 @@ export default function HomePage() {
                                                         {dateInfo && (
                                                             <div className="flex items-center gap-2 text-[13px] text-app-text-muted">
                                                                 <Clock size={12} className="text-brand-500 shrink-0" />
-                                                                <span className="truncate">{dateInfo.full}{ev.start?.time ? `, ${ev.start.time}` : ''}</span>
+                                                                <span className="truncate"><span className="text-app-text-faint text-[11px] font-semibold uppercase tracking-wider mr-1">Start</span>{dateInfo.full}{ev.start?.time ? `, ${ev.start.time} UTC` : ''}</span>
+                                                            </div>
+                                                        )}
+                                                        {endInfo && (
+                                                            <div className="flex items-center gap-2 text-[13px] text-app-text-muted">
+                                                                <Clock size={12} className="text-app-text-faint shrink-0" />
+                                                                <span className="truncate"><span className="text-app-text-faint text-[11px] font-semibold uppercase tracking-wider mr-1">End</span>{endInfo.full}{ev.end?.time ? `, ${ev.end.time} UTC` : ''}</span>
                                                             </div>
                                                         )}
                                                         {ev.venue?.name && (

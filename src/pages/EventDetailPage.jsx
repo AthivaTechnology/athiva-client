@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { ArrowLeft, CalendarDays, MapPin, Ticket, Clock, Users, ExternalLink, AlertCircle, Plus, Minus, ChevronDown } from 'lucide-react'
 import { useRef } from 'react'
@@ -43,6 +43,7 @@ function EventSkeleton() {
 
 export default function EventDetailPage() {
     const { eventId } = useParams()
+    const navigate = useNavigate()
     const [event, setEvent] = useState(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
@@ -92,7 +93,9 @@ export default function EventDetailPage() {
                     const hasHolds = (data?.ticket_types || []).some(t => t.held_count > 0)
                     schedulePoll(hasHolds)
                 })
-                .catch(() => {})
+                .catch((err) => {
+                    if (err.response?.status === 404) navigate('/')
+                })
         }
 
         // Initial load — schedule first poll at 30s regardless of hold state
@@ -103,7 +106,10 @@ export default function EventDetailPage() {
                 const hasHolds = (data?.ticket_types || []).some(t => t.held_count > 0)
                 schedulePoll(hasHolds, true)
             })
-            .catch(() => setError('Event not found.'))
+            .catch((err) => {
+                if (err.response?.status === 404) navigate('/')
+                else setError('Failed to load event. Please try again.')
+            })
             .finally(() => setLoading(false))
 
         // Resume immediately when tab becomes visible
@@ -179,8 +185,8 @@ export default function EventDetailPage() {
     const percentTotal = totalCapacity > 0 ? Math.min(100, (totalSold / totalCapacity) * 100) : 0
 
     const formatEventDate = (start) => {
-        if (!start?.date) return { date: 'TBA', time: '' }
-        const d = new Date(start.date)
+        if (!start?.unix) return { date: 'TBA', time: '' }
+        const d = new Date(start.unix * 1000)
         return {
             date: d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
             time: start.time || ''
@@ -188,6 +194,7 @@ export default function EventDetailPage() {
     }
 
     const { date: eventDate, time: eventTime } = formatEventDate(event.start)
+    const { date: eventEndDate, time: eventEndTime } = formatEventDate(event.end)
 
     return (
         <div className="bg-app-bg">
@@ -217,11 +224,13 @@ export default function EventDetailPage() {
 
                         <div className="flex flex-wrap items-center gap-5 text-xs font-medium text-app-text-muted">
                             <span className="flex items-center gap-1.5">
-                                <CalendarDays size={14} className="text-brand-500" /> {eventDate}
+                                <CalendarDays size={14} className="text-brand-500" />
+                                <span><span className="text-[10px] font-bold uppercase tracking-wider text-app-text-faint mr-1">Start</span>{eventDate}{eventTime ? `, ${eventTime} UTC` : ''}</span>
                             </span>
-                            {eventTime && (
+                            {eventEndDate && eventEndDate !== 'TBA' && (
                                 <span className="flex items-center gap-1.5">
-                                    <Clock size={14} className="text-brand-500" /> {eventTime}
+                                    <CalendarDays size={14} className="text-app-text-faint" />
+                                    <span><span className="text-[10px] font-bold uppercase tracking-wider text-app-text-faint mr-1">End</span>{eventEndDate}{eventEndTime ? `, ${eventEndTime} UTC` : ''}</span>
                                 </span>
                             )}
                         </div>
@@ -422,8 +431,16 @@ export default function EventDetailPage() {
                         <div className="space-y-5 relative z-10">
                             <div>
                                 <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-app-text-faint mb-1.5">When</p>
+                                <p className="text-[9px] font-bold uppercase tracking-wider text-app-text-faint mb-0.5">Start</p>
                                 <p className="font-outfit text-base font-bold text-app-text">{eventDate}</p>
-                                {eventTime && <p className="text-xs font-medium text-app-text-muted mt-0.5">{eventTime}</p>}
+                                {eventTime && <p className="text-xs font-medium text-app-text-muted mt-0.5">{eventTime} UTC</p>}
+                                {eventEndDate && eventEndDate !== 'TBA' && (
+                                    <div className="mt-3 pt-3 border-t border-app-border/50">
+                                        <p className="text-[9px] font-bold uppercase tracking-wider text-app-text-faint mb-0.5">End</p>
+                                        <p className="font-outfit text-base font-bold text-app-text">{eventEndDate}</p>
+                                        {eventEndTime && <p className="text-xs font-medium text-app-text-muted mt-0.5">{eventEndTime} UTC</p>}
+                                    </div>
+                                )}
                             </div>
 
                             <div>

@@ -1,8 +1,11 @@
 // Shared formatting utilities used across pages
 
-export const formatDate = (dateStr) => {
-    if (!dateStr) return null
-    const d = new Date(dateStr)
+// Pass start.unix (Unix timestamp from TT) for correct timezone-safe date display.
+// Avoid new Date("YYYY-MM-DD") — JS treats date-only strings as UTC midnight,
+// which shifts the displayed date by one day for attendees in UTC-offset timezones.
+export const formatDate = (unixSeconds) => {
+    if (!unixSeconds) return null
+    const d = new Date(unixSeconds * 1000)
     return {
         day:   d.toLocaleDateString('en-GB', { day: 'numeric' }),
         month: d.toLocaleDateString('en-GB', { month: 'short' }),
