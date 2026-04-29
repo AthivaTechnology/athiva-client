@@ -1,0 +1,172 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Theme Variables ───────────────────────────────────────── */
+:root {
+    /* Refined Organic Light Theme */
+    --app-bg: #FDFBF7;
+    /* Warm Alabaster */
+    --app-surface: #F5F2ED;
+    /* Soft warm surface */
+    --app-surface-2: #EAE6DF;
+    --app-border: #D1CEC5;
+    /* Organic stone border */
+    --app-text: #2C2A29;
+    /* Espresso */
+    --app-text-muted: #6B6661;
+    --app-text-faint: #A6A19C;
+    --navbar-bg: rgba(253, 251, 247, 0.85);
+
+    /* Brand accent (Deep Forest Green) */
+    --brand-r: 44;
+    --brand-g: 74;
+    --brand-b: 59;
+    --brand-400: 75 122 96;
+    --brand-500: 44 74 59;
+    --brand-600: 30 58 45;
+
+    /* Botanical Garden Accents */
+    --accent-fern: #4a7c59;
+    --accent-marigold: #f9a620;
+    --accent-terracotta: #b7472a;
+}
+
+/* ── Base ───────────────────────────────────────────────────── */
+@layer base {
+    body {
+        background-color: var(--app-bg);
+        color: var(--app-text);
+        font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+        @apply selection:bg-[#2C4A3B]/10 selection:text-[#2C4A3B];
+    }
+
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    .font-outfit {
+        font-family: 'Outfit', system-ui, sans-serif;
+    }
+
+    * {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(var(--brand-r), var(--brand-g), var(--brand-b), 0.15) transparent;
+    }
+
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus,
+    textarea:-webkit-autofill,
+    textarea:-webkit-autofill:hover,
+    textarea:-webkit-autofill:focus,
+    select:-webkit-autofill,
+    select:-webkit-autofill:hover,
+    select:-webkit-autofill:focus {
+        -webkit-text-fill-color: #2C2A29 !important;
+        -webkit-box-shadow: 0 0 0px 1000px #FDFBF7 inset !important;
+        box-shadow: 0 0 0px 1000px #FDFBF7 inset !important;
+        caret-color: #2C2A29 !important;
+        transition: background-color 5000s ease-in-out 0s;
+    }
+}
+
+/* ── Components ─────────────────────────────────────────────── */
+@layer components {
+
+    /* Navbar */
+    .navbar {
+        @apply sticky top-0 z-50 border-b transition-colors duration-500;
+        background-color: var(--navbar-bg);
+        border-color: var(--app-border);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+    }
+
+    /* Cards */
+    .event-card {
+        background-color: var(--app-surface);
+        border: 1px solid var(--app-border);
+        @apply rounded-2xl overflow-hidden transition-all duration-500;
+        box-shadow: 0 4px 24px -4px rgba(44, 42, 41, 0.02);
+    }
+
+    .event-card:hover {
+        border-color: rgba(var(--brand-r), var(--brand-g), var(--brand-b), 0.15);
+        box-shadow: 0 12px 40px -8px rgba(44, 42, 41, 0.08);
+        transform: translateY(-4px);
+    }
+
+    /* Skeleton Loading Base */
+    .skeleton {
+        @apply animate-pulse rounded-md;
+        background-color: var(--app-surface-2);
+    }
+}
+
+/* ── Animations ─────────────────────────────────────────────── */
+@keyframes fade-in-up {
+    from {
+        opacity: 0;
+        transform: translateY(16px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.animate-fade-up {
+    animation: fade-in-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-fade-up-delay-1 {
+    animation: fade-in-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both;
+}
+
+.animate-fade-up-delay-2 {
+    animation: fade-in-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.2s both;
+}
+
+/* ── Skeleton Shimmer ────────────────────────────────────────── */
+@keyframes skeleton-wave {
+    0% {
+        background-position: -400px 0;
+    }
+
+    100% {
+        background-position: 400px 0;
+    }
+}
+
+.skeleton-shimmer {
+    background: linear-gradient(90deg,
+            rgba(0, 0, 0, 0.03) 25%,
+            rgba(0, 0, 0, 0.06) 50%,
+            rgba(0, 0, 0, 0.03) 75%);
+    background-size: 400px 100%;
+    animation: skeleton-wave 1.5s ease-in-out infinite;
+}
+
+/* ── Custom Scrollbar ───────────────────────────────────────── */
+.custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(var(--brand-r), var(--brand-g), var(--brand-b), 0.1);
+    border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(var(--brand-r), var(--brand-g), var(--brand-b), 0.2);
+}
