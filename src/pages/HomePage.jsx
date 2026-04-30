@@ -8,6 +8,14 @@ import {
 import { API_ENDPOINTS } from '../config/api'
 import { formatDate, getStatusStyle, getLowestPrice } from '../utils/format'
 
+function formatTime12h(timeStr) {
+    if (!timeStr) return ''
+    const [h, m] = timeStr.split(':').map(Number)
+    const ampm = h >= 12 ? 'PM' : 'AM'
+    const hour = h % 12 || 12
+    return `${hour}:${String(m).padStart(2, '0')} ${ampm}`
+}
+
 function HomeSkeleton() {
     return (
         <div className="animate-pulse max-w-6xl mx-auto px-6 py-12">
@@ -174,7 +182,7 @@ export default function HomePage() {
                                                         <div className="absolute top-3 left-3 bg-app-surface/90 backdrop-blur-sm border border-app-border/50 shadow-sm rounded-lg px-3 py-1.5 text-center">
                                                             <p className="font-outfit text-sm font-bold text-app-text leading-tight">{dateInfo.day}</p>
                                                             <p className="text-[9px] font-bold text-brand-600 uppercase tracking-widest">{dateInfo.month}</p>
-                                                            {ev.start?.time && <p className="text-[9px] font-semibold text-app-text-muted mt-0.5">{ev.start.time} UTC</p>}
+                                                            {ev.start?.time && <p className="text-[9px] font-semibold text-app-text-muted mt-0.5">{formatTime12h(ev.start.time)}</p>}
                                                         </div>
                                                     )}
 
@@ -205,13 +213,13 @@ export default function HomePage() {
                                                         {dateInfo && (
                                                             <div className="flex items-center gap-2 text-[13px] text-app-text-muted">
                                                                 <Clock size={12} className="text-brand-500 shrink-0" />
-                                                                <span className="truncate"><span className="text-app-text-faint text-[11px] font-semibold uppercase tracking-wider mr-1">Start</span>{dateInfo.full}{ev.start?.time ? `, ${ev.start.time} UTC` : ''}</span>
+                                                                <span className="truncate"><span className="text-app-text-faint text-[11px] font-semibold uppercase tracking-wider mr-1">Start</span>{dateInfo.full}{ev.start?.time ? `, ${formatTime12h(ev.start.time)}` : ''}</span>
                                                             </div>
                                                         )}
                                                         {endInfo && (
                                                             <div className="flex items-center gap-2 text-[13px] text-app-text-muted">
                                                                 <Clock size={12} className="text-app-text-faint shrink-0" />
-                                                                <span className="truncate"><span className="text-app-text-faint text-[11px] font-semibold uppercase tracking-wider mr-1">End</span>{endInfo.full}{ev.end?.time ? `, ${ev.end.time} UTC` : ''}</span>
+                                                                <span className="truncate"><span className="text-app-text-faint text-[11px] font-semibold uppercase tracking-wider mr-1">End</span>{endInfo.full}{ev.end?.time ? `, ${formatTime12h(ev.end.time)}` : ''}</span>
                                                             </div>
                                                         )}
                                                         {ev.venue?.name && (

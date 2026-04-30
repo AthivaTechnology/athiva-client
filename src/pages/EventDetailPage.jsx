@@ -5,11 +5,6 @@ import { ArrowLeft, CalendarDays, MapPin, Ticket, Clock, Users, ExternalLink, Al
 import { useRef } from 'react'
 import { API_ENDPOINTS } from '../config/api'
 
-async function submitWaitlist(eventId, ticketTypeId, email) {
-    const res = await axios.post(API_ENDPOINTS.waitlist(eventId), { email, ticket_type_id: ticketTypeId })
-    return res.data
-}
-
 function EventSkeleton() {
     return (
         <div className="animate-pulse space-y-0">
@@ -29,8 +24,23 @@ function EventSkeleton() {
             <div className="max-w-4xl mx-auto px-5 py-8 lg:py-12 grid grid-cols-1 md:grid-cols-12 gap-8 lg:gap-12">
                 <div className="md:col-span-7 lg:col-span-8 space-y-10">
                     <div className="w-32 h-8 bg-app-surface-2 skeleton-shimmer rounded mb-6"></div>
-                    <div className="h-32 bg-app-surface-2 skeleton-shimmer rounded-2xl"></div>
-                    <div className="h-32 bg-app-surface-2 skeleton-shimmer rounded-2xl"></div>
+                    {/* Ticket card skeletons */}
+                    {[1, 2].map(i => (
+                        <div key={i} className="bg-app-surface border border-app-border rounded-[1.25rem] p-4">
+                            <div className="flex items-center justify-between mb-3">
+                                <div className="space-y-2">
+                                    <div className="w-36 h-4 bg-app-surface-2 skeleton-shimmer rounded"></div>
+                                    <div className="w-20 h-3 bg-app-surface-2 skeleton-shimmer rounded"></div>
+                                </div>
+                                <div className="w-14 h-6 bg-app-surface-2 skeleton-shimmer rounded"></div>
+                            </div>
+                            <div className="mt-3.5 pt-3.5 border-t border-app-border/50">
+                                <div className="h-1 w-full rounded-full bg-app-surface-2 overflow-hidden">
+                                    <div className="h-full w-2/3 rounded-full bg-app-border skeleton-shimmer" />
+                                </div>
+                            </div>
+                        </div>
+                    ))}
                 </div>
                 <div className="md:col-span-5 lg:col-span-4 space-y-6">
                     <div className="h-64 bg-app-surface-2 skeleton-shimmer rounded-3xl"></div>
@@ -48,9 +58,6 @@ export default function EventDetailPage() {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
     const [selectedTickets, setSelectedTickets] = useState({})
-    const [waitlistEmails, setWaitlistEmails] = useState({})
-    const [waitlistStatus, setWaitlistStatus] = useState({})
-    const [waitlistErrors, setWaitlistErrors] = useState({})
 
     const descriptionRef = useRef(null)
     const [showScrollIndicator, setShowScrollIndicator] = useState(false)
@@ -184,12 +191,20 @@ export default function EventDetailPage() {
     const totalCapacity = event.total_capacity || 0
     const percentTotal = totalCapacity > 0 ? Math.min(100, (totalSold / totalCapacity) * 100) : 0
 
+    const formatTime12h = (timeStr) => {
+        if (!timeStr) return ''
+        const [h, m] = timeStr.split(':').map(Number)
+        const ampm = h >= 12 ? 'PM' : 'AM'
+        const hour = h % 12 || 12
+        return `${hour}:${String(m).padStart(2, '0')} ${ampm}`
+    }
+
     const formatEventDate = (start) => {
         if (!start?.unix) return { date: 'TBA', time: '' }
         const d = new Date(start.unix * 1000)
         return {
             date: d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
-            time: start.time || ''
+            time: formatTime12h(start.time)
         }
     }
 
@@ -225,12 +240,12 @@ export default function EventDetailPage() {
                         <div className="flex flex-wrap items-center gap-5 text-xs font-medium text-app-text-muted">
                             <span className="flex items-center gap-1.5">
                                 <CalendarDays size={14} className="text-brand-500" />
-                                <span><span className="text-[10px] font-bold uppercase tracking-wider text-app-text-faint mr-1">Start</span>{eventDate}{eventTime ? `, ${eventTime} UTC` : ''}</span>
+                                <span><span className="text-[10px] font-bold uppercase tracking-wider text-app-text-faint mr-1">Start</span>{eventDate}{eventTime ? `, ${eventTime}` : ''}</span>
                             </span>
                             {eventEndDate && eventEndDate !== 'TBA' && (
                                 <span className="flex items-center gap-1.5">
                                     <CalendarDays size={14} className="text-app-text-faint" />
-                                    <span><span className="text-[10px] font-bold uppercase tracking-wider text-app-text-faint mr-1">End</span>{eventEndDate}{eventEndTime ? `, ${eventEndTime} UTC` : ''}</span>
+                                    <span><span className="text-[10px] font-bold uppercase tracking-wider text-app-text-faint mr-1">End</span>{eventEndDate}{eventEndTime ? `, ${eventEndTime}` : ''}</span>
                                 </span>
                             )}
                         </div>
@@ -304,49 +319,6 @@ export default function EventDetailPage() {
                                                             May become available — page updates automatically
                                                         </p>
                                                     )}
-                                                    {isSoldOut && (
-                                                        <div className="mt-2 relative z-10">
-                                                            {waitlistStatus[tt.id] === 'success' ? (
-                                                                <p className="text-[11px] font-semibold text-emerald-600">✓ You're on the waitlist!</p>
-                                                            ) : (
-                                                                <div className="flex items-center gap-2">
-                                                                    <input
-                                                                        type="email"
-                                                                        placeholder="your@email.com"
-                                                                        value={waitlistEmails[tt.id] || ''}
-                                                                        onChange={e => setWaitlistEmails(prev => ({ ...prev, [tt.id]: e.target.value }))}
-                                                                        className="flex-1 text-[11px] px-2.5 py-1.5 rounded-lg border border-app-border bg-app-bg text-app-text placeholder-app-text-faint focus:outline-none focus:border-brand-400/60 min-w-0"
-                                                                    />
-                                                                    <button
-                                                                        type="button"
-                                                                        disabled={waitlistStatus[tt.id] === 'loading'}
-                                                                        onClick={async () => {
-                                                                            const email = (waitlistEmails[tt.id] || '').trim()
-                                                                            if (!email || !email.includes('@')) {
-                                                                                setWaitlistErrors(prev => ({ ...prev, [tt.id]: 'Enter a valid email.' }))
-                                                                                return
-                                                                            }
-                                                                            setWaitlistErrors(prev => ({ ...prev, [tt.id]: '' }))
-                                                                            setWaitlistStatus(prev => ({ ...prev, [tt.id]: 'loading' }))
-                                                                            try {
-                                                                                await submitWaitlist(eventId, tt.id, email)
-                                                                                setWaitlistStatus(prev => ({ ...prev, [tt.id]: 'success' }))
-                                                                            } catch {
-                                                                                setWaitlistStatus(prev => ({ ...prev, [tt.id]: 'error' }))
-                                                                                setWaitlistErrors(prev => ({ ...prev, [tt.id]: 'Could not sign up. Try again.' }))
-                                                                            }
-                                                                        }}
-                                                                        className="shrink-0 text-[11px] font-bold px-3 py-1.5 rounded-lg bg-app-text text-app-surface hover:opacity-80 disabled:opacity-50 transition-opacity"
-                                                                    >
-                                                                        {waitlistStatus[tt.id] === 'loading' ? '...' : 'Notify Me'}
-                                                                    </button>
-                                                                </div>
-                                                            )}
-                                                            {waitlistErrors[tt.id] && waitlistStatus[tt.id] !== 'success' && (
-                                                                <p className="text-[10px] text-red-500 mt-1">{waitlistErrors[tt.id]}</p>
-                                                            )}
-                                                        </div>
-                                                    )}
                                                 </div>
 
                                                 <div className="flex items-center justify-between sm:justify-end gap-4 shrink-0">
@@ -382,8 +354,8 @@ export default function EventDetailPage() {
                                                 <div className="mt-3.5 pt-3.5 border-t border-app-border/50 relative z-10">
                                                     <div className="h-1 w-full rounded-full bg-app-surface-2 overflow-hidden">
                                                         <div
-                                                            className={`h-full rounded-full transition-all duration-1000 ${isSoldOut ? 'bg-app-border' : 'bg-brand-500'}`}
-                                                            style={{ width: `${Math.max(1, percent)}%` }}
+                                                            className={`h-full rounded-full transition-all duration-1000 ${isSoldOut ? 'bg-red-400/70' : 'bg-brand-500'}`}
+                                                            style={{ width: isSoldOut ? '100%' : `${Math.max(1, percent)}%` }}
                                                         />
                                                     </div>
                                                 </div>
@@ -433,12 +405,12 @@ export default function EventDetailPage() {
                                 <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-app-text-faint mb-1.5">When</p>
                                 <p className="text-[9px] font-bold uppercase tracking-wider text-app-text-faint mb-0.5">Start</p>
                                 <p className="font-outfit text-base font-bold text-app-text">{eventDate}</p>
-                                {eventTime && <p className="text-xs font-medium text-app-text-muted mt-0.5">{eventTime} UTC</p>}
+                                {eventTime && <p className="text-xs font-medium text-app-text-muted mt-0.5">{eventTime}</p>}
                                 {eventEndDate && eventEndDate !== 'TBA' && (
                                     <div className="mt-3 pt-3 border-t border-app-border/50">
                                         <p className="text-[9px] font-bold uppercase tracking-wider text-app-text-faint mb-0.5">End</p>
                                         <p className="font-outfit text-base font-bold text-app-text">{eventEndDate}</p>
-                                        {eventEndTime && <p className="text-xs font-medium text-app-text-muted mt-0.5">{eventEndTime} UTC</p>}
+                                        {eventEndTime && <p className="text-xs font-medium text-app-text-muted mt-0.5">{eventEndTime}</p>}
                                     </div>
                                 )}
                             </div>
@@ -491,7 +463,7 @@ export default function EventDetailPage() {
                                     {allSoldOut ? (
                                         <div className="py-2 text-center text-white">
                                             <p className="font-outfit text-lg font-bold mb-1">Sold Out</p>
-                                            <p className="text-white/60 text-xs">Join the waitlist on individual tickets above</p>
+                                            <p className="text-white/60 text-xs">All tickets have been claimed</p>
                                         </div>
                                     ) : Object.keys(selectedTickets).length > 0 ? (
                                         <div className="space-y-4">

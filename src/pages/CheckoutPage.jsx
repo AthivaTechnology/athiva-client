@@ -94,20 +94,25 @@ export default function CheckoutPage() {
     const [timeLeft, setTimeLeft] = useState(null) // seconds remaining
     const [showTerms, setShowTerms] = useState(false)
     const [waitingForTab, setWaitingForTab] = useState(false)
+    const redirectedRef = useRef(false)  // true only after window.location.href redirect fires
 
     // Reset processing state when user returns from external redirect (e.g., Stripe)
     useEffect(() => {
         const handleVisibilityChange = () => {
-            if (document.visibilityState === 'visible' && processing) {
+            // Only reset if we actually redirected away — not during an in-progress API call
+            if (document.visibilityState === 'visible' && processing && redirectedRef.current) {
                 setProcessing(false)
                 submittingRef.current = false
+                redirectedRef.current = false
             }
         }
 
         const handleFocus = () => {
-            if (processing) {
+            // Only reset if we actually redirected away — not during an in-progress API call
+            if (processing && redirectedRef.current) {
                 setProcessing(false)
                 submittingRef.current = false
+                redirectedRef.current = false
             }
         }
 
@@ -245,6 +250,7 @@ export default function CheckoutPage() {
             }
             // Always go to Stripe immediately — T&C already covered the 10-min rule
             releaseLock()
+            redirectedRef.current = true
             window.location.href = data.url
         } catch (err) {
             const detail = err.response?.data?.detail;
@@ -447,7 +453,7 @@ export default function CheckoutPage() {
                                             Processing...
                                         </>
                                     ) : (
-                                        `Pay $${totalPrice.toFixed(2)}`
+                                        totalPrice === 0 ? 'Get Free Ticket' : `Pay $${totalPrice.toFixed(2)}`
                                     )}
                                 </button>
                             </div>
@@ -599,7 +605,7 @@ export default function CheckoutPage() {
                             disabled={processing || waitingForTab}
                             className="w-full bg-app-text text-app-surface font-bold py-3 rounded-xl text-[13px] hover:bg-[#1A1817] transition-colors shadow-organic disabled:opacity-50 disabled:pointer-events-none"
                         >
-                            {waitingForTab ? 'Waiting for another tab...' : 'I Accept — Continue to Payment'}
+                            {waitingForTab ? 'Waiting for another tab...' : totalPrice === 0 ? 'I Accept — Get Free Ticket' : 'I Accept — Continue to Payment'}
                         </button>
                         <button
                             onClick={() => setShowTerms(false)}

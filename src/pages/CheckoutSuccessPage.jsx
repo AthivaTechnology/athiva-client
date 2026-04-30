@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
-import { CheckCircle, XCircle, AlertCircle, Ticket, Mail, CalendarDays, ArrowRight } from 'lucide-react'
+import { CheckCircle, XCircle, AlertCircle, Mail, CalendarDays, ArrowRight } from 'lucide-react'
 import axios from 'axios'
 import { API_ENDPOINTS } from '../config/api'
 
@@ -170,19 +170,6 @@ export default function CheckoutSuccessPage() {
                                 </div>
                             )}
 
-                            {/* Order ID */}
-                            {shortOrderId && (
-                                <div className="rounded-lg p-3.5 flex items-center gap-3 bg-app-bg border border-app-border">
-                                    <div className="w-8 h-8 bg-app-surface rounded flex items-center justify-center text-brand-600 border border-app-border shadow-sm shrink-0">
-                                        <Ticket size={14} />
-                                    </div>
-                                    <div>
-                                        <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-app-text-faint mb-0.5">Order Ref</p>
-                                        <p className="font-outfit font-bold text-base text-app-text">#{shortOrderId}</p>
-                                    </div>
-                                </div>
-                            )}
-
                             {/* What's next */}
                             <div className="space-y-3.5">
                                 <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-app-text-faint mb-3">Important Next Steps</p>
@@ -218,7 +205,7 @@ export default function CheckoutSuccessPage() {
                                     Browse More <ArrowRight size={14} />
                                 </Link>
                                 <p className="text-center text-[10px] text-app-text-faint mt-4">
-                                    Need help? <Link to="/" className="text-brand-600 hover:text-brand-500 font-medium">Contact support</Link>.
+                                    Need help? <a href="mailto:support@athiva.com" className="text-brand-600 hover:text-brand-500 font-medium">Contact support</a>.
                                 </p>
                             </div>
                         </div>

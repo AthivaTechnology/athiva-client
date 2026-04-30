@@ -8,5 +8,4 @@ export const API_ENDPOINTS = {
     event: (eventId) => `${API_BASE}/site/events/${eventId}`,
     checkoutCreate: () => `${API_BASE}/site/checkout/session`,
     bookings: (email) => `${API_BASE}/site/bookings?email=${encodeURIComponent(email)}`,
-    waitlist: (eventId) => `${API_BASE}/site/waitlist/${eventId}`,
 }
