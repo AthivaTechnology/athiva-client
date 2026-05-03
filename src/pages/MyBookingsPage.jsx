@@ -31,9 +31,10 @@ export default function MyBookingsPage() {
 
     const getStatusStyle = (status) => {
         switch (status) {
-            case 'complete': return { label: 'Confirmed', cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' }
-            case 'pending':  return { label: 'Pending',   cls: 'bg-amber-100 text-amber-700 border-amber-200' }
-            default:         return { label: status,      cls: 'bg-gray-100 text-gray-500 border-gray-200' }
+            case 'complete':  return { label: 'Confirmed', cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' }
+            case 'pending':   return { label: 'Pending',   cls: 'bg-amber-100 text-amber-700 border-amber-200' }
+            case 'refunded':  return { label: 'Refunded',  cls: 'bg-red-100 text-red-600 border-red-200' }
+            default:          return { label: status,      cls: 'bg-gray-100 text-gray-500 border-gray-200' }
         }
     }
 

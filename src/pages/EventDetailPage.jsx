@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import axios from 'axios'
 import { ArrowLeft, CalendarDays, MapPin, Ticket, Clock, Users, ExternalLink, AlertCircle, Plus, Minus, ChevronDown } from 'lucide-react'
 import { useRef } from 'react'
@@ -54,6 +54,8 @@ function EventSkeleton() {
 export default function EventDetailPage() {
     const { eventId } = useParams()
     const navigate = useNavigate()
+    const [searchParams] = useSearchParams()
+    const reservationExpired = searchParams.get('reservation') === 'expired'
     const [event, setEvent] = useState(null)
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
@@ -213,6 +215,14 @@ export default function EventDetailPage() {
 
     return (
         <div className="bg-app-bg">
+
+            {/* ── Reservation expired banner ───────────────────────── */}
+            {reservationExpired && (
+                <div className="bg-red-50 border-b border-red-200 px-5 py-3 flex items-center justify-center gap-2 text-sm text-red-700">
+                    <AlertCircle size={15} className="shrink-0" />
+                    <span>Your ticket reservation expired. Please select your tickets and try again.</span>
+                </div>
+            )}
 
             {/* ── Header ───────────────────────────────────────────── */}
             <header className="relative border-b border-app-border bg-app-surface overflow-hidden">

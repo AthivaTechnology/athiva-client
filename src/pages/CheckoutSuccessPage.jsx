@@ -9,7 +9,7 @@ export default function CheckoutSuccessPage() {
     const navigate = useNavigate()
     const sessionId = searchParams.get('session_id')
 
-    const [status, setStatus] = useState('loading') // loading | success | failed | error | pending_timeout
+    const [status, setStatus] = useState('loading') // loading | success | failed | error | pending_timeout | refunded
     const [sessionData, setSessionData] = useState(null)
 
     useEffect(() => {
@@ -35,9 +35,22 @@ export default function CheckoutSuccessPage() {
                     setSessionData(data)
                     setStatus('success')
                     document.title = 'Booking Confirmed'
+                } else if (data.status === 'refunded') {
+                    setSessionData(data)
+                    setStatus('refunded')
                 } else if (data.status === 'failed') {
                     setSessionData(data)
                     setStatus('failed')
+                } else if (data.status === 'expired') {
+                    // Hold released by frontend timer — webhook is processing the refund.
+                    // Keep polling; if it completes the status will flip to 'refunded'.
+                    if (attempts < maxAttempts) {
+                        attempts++
+                        setTimeout(pollSession, 3000)
+                    } else {
+                        setSessionData(data)
+                        setStatus('pending_timeout')
+                    }
                 } else if (attempts < maxAttempts) {
                     attempts++
                     setTimeout(pollSession, 3000)
@@ -45,7 +58,8 @@ export default function CheckoutSuccessPage() {
                     // Exhausted all attempts — if backend was already recovering,
                     // show amber "still confirming" instead of red "payment failed"
                     setSessionData(data)
-                    setStatus(lastKnownStatus === 'pending_recovery' ? 'pending_timeout' : 'failed')
+                    const timedOutGracefully = ['pending_recovery', 'processing'].includes(lastKnownStatus)
+                    setStatus(timedOutGracefully ? 'pending_timeout' : 'failed')
                 }
             } catch (err) {
                 if (cancelled) return
@@ -133,6 +147,29 @@ export default function CheckoutSuccessPage() {
                             </p>
                             <Link to="/" className="inline-flex items-center justify-center gap-2 w-full py-3 rounded-lg font-bold bg-app-surface text-app-text border border-app-border hover:bg-app-surface-2 transition-colors shadow-sm text-[13px]">
                                 Return to Events <ArrowRight size={14} />
+                            </Link>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {status === 'refunded' && (
+                <div className="w-full max-w-sm animate-fade-up">
+                    <div className="rounded-[1.25rem] shadow-organic overflow-hidden border border-red-100 bg-app-surface">
+                        <div className="bg-red-50 p-6 text-center border-b border-red-100 relative overflow-hidden">
+                            <XCircle size={40} className="text-red-500 mx-auto mb-3 relative z-10" />
+                            <h2 className="font-outfit text-xl font-bold text-app-text relative z-10">Payment Refunded</h2>
+                        </div>
+                        <div className="p-6 text-center space-y-4">
+                            <p className="text-app-text-muted text-[13px] leading-relaxed">
+                                Your ticket reservation expired while you were completing payment.
+                                A full refund has been issued and will appear on your card in 3–10 business days.
+                            </p>
+                            <p className="text-app-text-muted text-[13px] leading-relaxed">
+                                Check your email for a refund confirmation, then try booking again if tickets are still available.
+                            </p>
+                            <Link to="/" className="inline-flex items-center justify-center gap-2 w-full py-3 rounded-lg font-bold bg-app-surface text-app-text border border-app-border hover:bg-app-surface-2 transition-colors shadow-sm text-[13px]">
+                                Back to Events <ArrowRight size={14} />
                             </Link>
                         </div>
                     </div>

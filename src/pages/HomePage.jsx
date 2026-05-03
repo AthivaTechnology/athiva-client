@@ -245,7 +245,9 @@ export default function HomePage() {
                                                             ) : (
                                                                 <>
                                                                     <div className="flex justify-between text-[10px] font-bold text-app-text-faint uppercase tracking-wider mb-1.5">
-                                                                        <span>{(sold + held) === 0 ? 'Just released' : `${sold + held} booked`}</span>
+                                                                        <span>
+                                                                            {sold > 0 ? `${sold} issued` : ''}
+                                                                        </span>
                                                                         <span className={isLow ? 'text-amber-600' : ''}>
                                                                             {isLow ? `Only ${remaining} left!` : `${remaining} left`}
                                                                         </span>

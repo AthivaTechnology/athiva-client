@@ -92,9 +92,33 @@ export default function CheckoutPage() {
     const submittingRef = useRef(false)  // Additional guard against double submission
     const [reservation, setReservation] = useState(null) // { url, expiresAt: Date, heldQuantity }
     const [timeLeft, setTimeLeft] = useState(null) // seconds remaining
+    const [resumeSession, setResumeSession] = useState(null) // { stripeUrl, expiresAt, sessionId } if back-button detected
+    const [resumeTimeLeft, setResumeTimeLeft] = useState(null) // seconds remaining for resume banner
     const [showTerms, setShowTerms] = useState(false)
     const [waitingForTab, setWaitingForTab] = useState(false)
     const redirectedRef = useRef(false)  // true only after window.location.href redirect fires
+
+    const refreshResumeSession = (currentEventId) => {
+        try {
+            const raw = sessionStorage.getItem('tt_hold')
+            if (!raw) {
+                setResumeSession(null)
+                return
+            }
+            const hold = JSON.parse(raw)
+            const expiresAt = hold.expiresAt ? new Date(hold.expiresAt) : null
+            if (
+                hold.stripeUrl &&
+                hold.eventId === currentEventId &&
+                expiresAt &&
+                expiresAt > new Date()
+            ) {
+                setResumeSession({ stripeUrl: hold.stripeUrl, expiresAt, sessionId: hold.sessionId })
+                return
+            }
+        } catch {}
+        setResumeSession(null)
+    }
 
     // Reset processing state when user returns from external redirect (e.g., Stripe)
     useEffect(() => {
@@ -105,6 +129,9 @@ export default function CheckoutPage() {
                 submittingRef.current = false
                 redirectedRef.current = false
             }
+            if (document.visibilityState === 'visible') {
+                refreshResumeSession(eventId)
+            }
         }
 
         const handleFocus = () => {
@@ -114,6 +141,7 @@ export default function CheckoutPage() {
                 submittingRef.current = false
                 redirectedRef.current = false
             }
+            refreshResumeSession(eventId)
         }
 
         // Primary bfcache restore signal — fires reliably across Chrome, Firefox, Safari
@@ -124,6 +152,7 @@ export default function CheckoutPage() {
                 submittingRef.current = false
                 setReturnedFromStripe(true)
             }
+            refreshResumeSession(eventId)
         }
 
         document.addEventListener('visibilitychange', handleVisibilityChange)
@@ -136,6 +165,43 @@ export default function CheckoutPage() {
             window.removeEventListener('pageshow', handlePageShow)
         }
     }, [processing])
+
+    // Detect existing valid hold/session from sessionStorage (Back-button resume)
+    useEffect(() => {
+        refreshResumeSession(eventId)
+    }, [eventId])
+
+    useEffect(() => {
+        if (!resumeSession) {
+            setResumeTimeLeft(null)
+            return
+        }
+        const tick = () => {
+            const secs = Math.max(0, Math.floor((resumeSession.expiresAt - Date.now()) / 1000))
+            setResumeTimeLeft(secs)
+            // Auto-cancel when time reaches zero
+            if (secs === 0) {
+                let sessionId = resumeSession?.sessionId
+                try {
+                    const raw = sessionStorage.getItem('tt_hold')
+                    if (raw) {
+                        const hold = JSON.parse(raw)
+                        sessionId = hold.sessionId || sessionId
+                    }
+                } catch {}
+                if (sessionId) {
+                    axios.post(API_ENDPOINTS.releaseHold(sessionId)).catch(() => {})
+                }
+                sessionStorage.removeItem('tt_hold')
+                setResumeSession(null)
+                setReturnedFromStripe(false)
+                setCheckoutError('Your reservation has expired. Please start over.')
+            }
+        }
+        tick()
+        const id = setInterval(tick, 1000)
+        return () => clearInterval(id)
+    }, [resumeSession])
 
     useEffect(() => {
         if (!eventId || Object.keys(selectedTickets).length === 0) {
@@ -175,14 +241,16 @@ export default function CheckoutPage() {
             setTimeLeft(secs)
             if (secs === 0 && !released) {
                 released = true
-                // Tell backend to release the TT hold so inventory is freed immediately
+                // Release TT hold immediately so inventory is freed for other buyers
                 axios.post(API_ENDPOINTS.releaseHold(reservation.sessionId)).catch(() => {})
+                // Redirect back to event page — Stripe session is now expired too
+                navigate(`/events/${eventId}?reservation=expired`)
             }
         }
         tick()
         const id = setInterval(tick, 1000)
         return () => clearInterval(id)
-    }, [reservation])
+    }, [reservation, navigate, eventId])
 
     // Step 1: validate form → show T&C modal
     const handleCheckout = (e) => {
@@ -229,23 +297,28 @@ export default function CheckoutPage() {
                 quantity: selectedTickets[t.id]
             }));
 
+            // Get customer's timezone from browser
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
             const { data } = await axios.post(API_ENDPOINTS.checkoutCreate(), {
                 event_id: eventId,
                 items,
                 customer_email: email,
                 customer_name: name,
-                customer_phone: phone
+                customer_phone: phone,
+                customer_timezone: tz
             })
 
             if (!data.url) {
                 throw new Error('No redirect URL received from server.')
             }
             if (data.hold_expires_at) {
-                // Store hold info so the expiry release endpoint can be called
-                // if the user comes back without paying (timer fires in background)
+                // Store hold info + Stripe URL so Back-button resume works
                 sessionStorage.setItem('tt_hold', JSON.stringify({
                     sessionId: data.session_id,
                     expiresAt: data.hold_expires_at,
+                    stripeUrl: data.url,
+                    eventId,
                 }))
             }
             // Always go to Stripe immediately — T&C already covered the 10-min rule
@@ -371,11 +444,62 @@ export default function CheckoutPage() {
                         </h2>
 
                         <form onSubmit={handleCheckout}>
-                            {returnedFromStripe && !checkoutError && (
+                            {resumeSession && !checkoutError && (() => {
+                                const secsLeft = resumeTimeLeft ?? Math.max(0, Math.floor((resumeSession.expiresAt - Date.now()) / 1000))
+                                const mins = String(Math.floor(secsLeft / 60)).padStart(2, '0')
+                                const secs = String(secsLeft % 60).padStart(2, '0')
+                                return (
+                                    <div className="mb-5 p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs">
+                                        <p className="font-bold text-sm mb-1">Your tickets are still reserved</p>
+                                        <p className="text-amber-700 mb-3 leading-relaxed">
+                                            You have an active reservation expiring in <strong>{mins}:{secs}</strong>. Resume your payment or cancel to release these tickets.
+                                        </p>
+                                        <div className="flex gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => { sessionStorage.removeItem('tt_hold'); window.location.href = resumeSession.stripeUrl }}
+                                                className="flex-1 py-2 rounded-lg bg-amber-600 text-white font-bold text-xs hover:bg-amber-700 transition-colors"
+                                            >
+                                                Resume Payment →
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    let sessionId = resumeSession?.sessionId
+                                                    try {
+                                                        const raw = sessionStorage.getItem('tt_hold')
+                                                        if (raw) {
+                                                            const hold = JSON.parse(raw)
+                                                            sessionId = hold.sessionId || sessionId
+                                                        }
+                                                    } catch {}
+                                                    console.log('[Cancel] sessionId:', sessionId)
+                                                    if (sessionId) {
+                                                        console.log('[Cancel] Calling releaseHold with:', API_ENDPOINTS.releaseHold(sessionId))
+                                                        axios.post(API_ENDPOINTS.releaseHold(sessionId))
+                                                            .then(res => console.log('[Cancel] Release success:', res.status))
+                                                            .catch(err => console.error('[Cancel] Release failed:', err.message))
+                                                    } else {
+                                                        console.warn('[Cancel] No sessionId found!')
+                                                    }
+                                                    sessionStorage.removeItem('tt_hold')
+                                                    setResumeSession(null)
+                                                    setReturnedFromStripe(false)
+                                                    setCheckoutError('')
+                                                }}
+                                                className="px-3 py-2 rounded-lg bg-amber-100 text-amber-800 font-semibold text-xs hover:bg-amber-200 transition-colors"
+                                            >
+                                                Cancel
+                                            </button>
+                                        </div>
+                                    </div>
+                                )
+                            })()}
+                            {!resumeSession && returnedFromStripe && !checkoutError && (
                                 <div className="mb-5 p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start gap-2.5">
                                     <AlertCircle size={14} className="mt-0.5 shrink-0 text-amber-600" />
                                     <p className="font-medium leading-relaxed">
-                                        You returned from payment. If you had tickets reserved, they may still be held — complete checkout quickly or they will be released automatically.
+                                        You returned from payment. Your previous reservation has expired — you can book again below.
                                     </p>
                                 </div>
                             )}
