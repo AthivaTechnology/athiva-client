@@ -32,13 +32,16 @@ export default function CheckoutSuccessPage() {
                 lastKnownStatus = data.status
 
                 if (data.status === 'complete') {
+                    sessionStorage.removeItem('tt_hold')
                     setSessionData(data)
                     setStatus('success')
                     document.title = 'Booking Confirmed'
                 } else if (data.status === 'refunded') {
+                    sessionStorage.removeItem('tt_hold')
                     setSessionData(data)
                     setStatus('refunded')
                 } else if (data.status === 'failed') {
+                    sessionStorage.removeItem('tt_hold')
                     setSessionData(data)
                     setStatus('failed')
                 } else if (data.status === 'expired') {

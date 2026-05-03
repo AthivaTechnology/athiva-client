@@ -113,6 +113,17 @@ export default function CheckoutPage() {
                 expiresAt &&
                 expiresAt > new Date()
             ) {
+                // Silently check if payment already completed — if so, clear and hide banner
+                if (hold.sessionId) {
+                    axios.get(API_ENDPOINTS.checkoutSession(hold.sessionId))
+                        .then(({ data }) => {
+                            if (['complete', 'refunded', 'failed'].includes(data.status)) {
+                                sessionStorage.removeItem('tt_hold')
+                                setResumeSession(null)
+                            }
+                        })
+                        .catch(() => {}) // network error — leave banner visible, user can cancel
+                }
                 setResumeSession({ stripeUrl: hold.stripeUrl, expiresAt, sessionId: hold.sessionId })
                 return
             }
