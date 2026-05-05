@@ -30,7 +30,8 @@ export default function CheckoutCancelPage() {
             }
         } catch {}
 
-        // No valid session — show expired state
+        // No valid session — clear stale storage and show expired state
+        sessionStorage.removeItem('tt_hold')
         setExpired(true)
 
         return () => { document.title = 'Events' }
@@ -44,7 +45,7 @@ export default function CheckoutCancelPage() {
             setRedirectIn(prev => {
                 if (prev <= 1) {
                     clearInterval(redirectRef.current)
-                    navigate('/')
+                    navigate(urlEventId ? `/events/${urlEventId}` : '/')
                     return 0
                 }
                 return prev - 1

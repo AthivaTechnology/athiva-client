@@ -160,9 +160,9 @@ export default function CheckoutPage() {
     // Auto-redirect home when session expired
     useEffect(() => {
         if (!sessionExpired) return
-        const t = setTimeout(() => navigate('/'), 3000)
+        const t = setTimeout(() => navigate(eventId ? `/events/${eventId}` : '/'), 3000)
         return () => clearTimeout(t)
-    }, [sessionExpired, navigate])
+    }, [sessionExpired, navigate, eventId])
 
     // Step 1: check existing session first, then validate form → show T&C (only for new sessions)
     const handleCheckout = (e) => {
@@ -181,8 +181,9 @@ export default function CheckoutPage() {
                         window.location.href = hold.stripeUrl
                         return
                     } else {
-                        // Expired — clear and show expired screen
+                        // Expired — clear storage + lock, then show expired screen
                         sessionStorage.removeItem('tt_hold')
+                        releaseLock()
                         setSessionExpired(true)
                         return
                     }
@@ -221,8 +222,9 @@ export default function CheckoutPage() {
                         window.location.href = hold.stripeUrl
                         return
                     } else {
-                        // Expired — clear storage, show message, go home
+                        // Expired — clear storage + lock, then show expired screen
                         sessionStorage.removeItem('tt_hold')
+                        releaseLock()
                         setSessionExpired(true)
                         return
                     }
@@ -321,10 +323,10 @@ export default function CheckoutPage() {
                         Your ticket reservation has expired. Returning to home...
                     </p>
                     <Link
-                        to="/"
+                        to={eventId ? `/events/${eventId}` : '/'}
                         className="w-full flex items-center justify-center gap-2 bg-app-surface text-app-text font-bold py-3 rounded-lg hover:bg-app-surface-2 transition-colors border border-app-border text-[13px] shadow-sm"
                     >
-                        <ArrowLeft size={14} /> Back to Directory
+                        <ArrowLeft size={14} /> {eventId ? 'Back to Event' : 'Back to Directory'}
                     </Link>
                 </div>
             </div>
@@ -347,6 +349,14 @@ export default function CheckoutPage() {
     }
 
     const totalPrice = tickets.reduce((sum, t) => sum + ((t.price || 0) / 100 * selectedTickets[t.id]), 0);
+
+    const formatTime12h = (timeStr) => {
+        if (!timeStr) return ''
+        const [h, m] = timeStr.split(':').map(Number)
+        const ampm = h >= 12 ? 'PM' : 'AM'
+        const hour = h % 12 || 12
+        return `${hour}:${String(m).padStart(2, '0')} ${ampm}`
+    }
 
     const d = event.start?.date ? new Date(event.start.date) : null
     const dateStr = d ? d.toLocaleDateString('en-GB', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : null
@@ -495,7 +505,7 @@ export default function CheckoutPage() {
                                 {event.start?.time && (
                                     <div className="flex items-center gap-2">
                                         <Clock size={14} className="text-brand-500" />
-                                        <span>{event.start.time}</span>
+                                        <span>{formatTime12h(event.start.time)}</span>
                                     </div>
                                 )}
                             </div>

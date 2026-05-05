@@ -79,19 +79,17 @@ export default function EventDetailPage() {
     }
 
     useEffect(() => {
-        // Three-speed polling strategy:
-        //   15s on first check after load (catches a hold created just before page opened)
-        //   15s when holds active (time-sensitive — tracks expiry accurately)
-        //   60s when no holds and already done the first check (saves requests when idle)
+        // Two-speed polling strategy:
+        //   30s when holds active (time-sensitive — tracks expiry accurately)
+        //   60s when no holds (saves requests when idle)
         const POLL_SLOW = 60000
         const POLL_FAST = 30000
 
         let timer = null
 
-        // isFirstPoll=true forces POLL_FAST once regardless of hold state
-        const schedulePoll = (hasHolds, isFirstPoll = false) => {
+        const schedulePoll = (hasHolds) => {
             clearTimeout(timer)
-            timer = setTimeout(fetchAndReschedule, (hasHolds || isFirstPoll) ? POLL_FAST : POLL_SLOW)
+            timer = setTimeout(fetchAndReschedule, hasHolds ? POLL_FAST : POLL_SLOW)
         }
 
         const fetchAndReschedule = () => {
@@ -107,13 +105,13 @@ export default function EventDetailPage() {
                 })
         }
 
-        // Initial load — schedule first poll at 30s regardless of hold state
+        // Initial load — fetch immediately, then schedule polling
         axios.get(API_ENDPOINTS.event(eventId))
             .then(({ data }) => {
                 setEvent(data)
                 if (data?.name) document.title = data.name
                 const hasHolds = (data?.ticket_types || []).some(t => t.held_count > 0)
-                schedulePoll(hasHolds, true)
+                schedulePoll(hasHolds)
             })
             .catch((err) => {
                 if (err.response?.status === 404) navigate('/')
