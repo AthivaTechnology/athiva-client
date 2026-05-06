@@ -1,45 +1,31 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft } from 'lucide-react'
+import { readCheckoutSession } from '../utils/checkoutSession'
 
 export default function CheckoutCancelPage() {
     const navigate = useNavigate()
     const [searchParams] = useSearchParams()
     const urlEventId = searchParams.get('event_id')
-
     const [redirectIn, setRedirectIn] = useState(3)
-    const [expired, setExpired] = useState(false)
     const redirectRef = useRef(null)
 
     useEffect(() => {
+        // If a valid session exists, resume checkout instead of showing cancelled screen
+        const session = readCheckoutSession()
+        if (session?.eventId === urlEventId && session.ticketsParam) {
+            const expiresAt = session.expiresAt ? new Date(session.expiresAt) : null
+            if (expiresAt && expiresAt > new Date()) {
+                navigate(
+                    `/checkout?eventId=${session.eventId}&tickets=${encodeURIComponent(session.ticketsParam)}`,
+                    { replace: true }
+                )
+                return
+            }
+        }
+
         document.title = 'Checkout Cancelled'
 
-        try {
-            const raw = sessionStorage.getItem('tt_hold')
-            if (raw) {
-                const hold = JSON.parse(raw)
-                const expiresAt = hold.expiresAt ? new Date(hold.expiresAt) : null
-                if (expiresAt && expiresAt > new Date() && hold.eventId && hold.ticketsParam) {
-                    // Valid session — send back to checkout with pre-filled form
-                    navigate(
-                        `/checkout?eventId=${hold.eventId}&tickets=${encodeURIComponent(hold.ticketsParam)}`,
-                        { replace: true }
-                    )
-                    return
-                }
-            }
-        } catch {}
-
-        // No valid session — clear stale storage and show expired state
-        sessionStorage.removeItem('tt_hold')
-        setExpired(true)
-
-        return () => { document.title = 'Events' }
-    }, [navigate])
-
-    // Auto-redirect countdown when expired
-    useEffect(() => {
-        if (!expired) return
         setRedirectIn(3)
         redirectRef.current = setInterval(() => {
             setRedirectIn(prev => {
@@ -51,17 +37,12 @@ export default function CheckoutCancelPage() {
                 return prev - 1
             })
         }, 1000)
-        return () => clearInterval(redirectRef.current)
-    }, [expired, navigate])
 
-    // While redirecting to /checkout (valid session), show spinner
-    if (!expired) {
-        return (
-            <div className="flex-1 flex items-center justify-center p-5 py-12 min-h-[70vh] bg-app-bg">
-                <div className="w-8 h-8 rounded-full border-2 border-app-surface-2 border-t-brand-500 animate-spin" />
-            </div>
-        )
-    }
+        return () => {
+            clearInterval(redirectRef.current)
+            document.title = 'Events'
+        }
+    }, [navigate, urlEventId])
 
     return (
         <div className="flex-1 flex items-center justify-center p-5 py-12 min-h-[70vh] bg-app-bg animate-fade-up">
@@ -70,9 +51,9 @@ export default function CheckoutCancelPage() {
                     <div className="w-12 h-12 bg-red-50 rounded-xl flex items-center justify-center mx-auto mb-5 border border-red-100">
                         <AlertTriangle size={24} className="text-red-500" />
                     </div>
-                    <h1 className="font-outfit text-xl font-bold text-app-text mb-2">Session Expired</h1>
+                    <h1 className="font-outfit text-xl font-bold text-app-text mb-2">Checkout Cancelled</h1>
                     <p className="text-app-text-muted text-[13px] mb-6 leading-relaxed">
-                        Your ticket reservation has expired. Redirecting to home in{' '}
+                        Your checkout was cancelled. Redirecting in{' '}
                         <strong className="text-app-text">{redirectIn}s</strong>...
                     </p>
                     <Link

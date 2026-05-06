@@ -6,6 +6,13 @@ import {
     ShieldCheck, AlertCircle
 } from 'lucide-react'
 import { API_ENDPOINTS } from '../config/api'
+import {
+    CHECKOUT_SESSION_TTL_MS,
+    clearCheckoutSession,
+    readCheckoutSession,
+    saveCheckoutSession,
+    parseTicketSelection,
+} from '../utils/checkoutSession'
 
 function CheckoutSkeleton() {
     return (
@@ -34,34 +41,6 @@ function CheckoutSkeleton() {
     )
 }
 
-// ── Cross-tab checkout lock ───────────────────────────────────────────────
-const CHECKOUT_LOCK_KEY = 'athiva_checkout_lock'
-const LOCK_TTL_MS = 35_000
-
-const tryAcquireLock = () => {
-    const raw = localStorage.getItem(CHECKOUT_LOCK_KEY)
-    if (raw) {
-        const t = Number(raw)
-        if (!isNaN(t) && Date.now() - t < LOCK_TTL_MS) return false
-    }
-    localStorage.setItem(CHECKOUT_LOCK_KEY, String(Date.now()))
-    return true
-}
-
-const releaseLock = () => localStorage.removeItem(CHECKOUT_LOCK_KEY)
-
-const waitForLock = () =>
-    new Promise((resolve) => {
-        const onStorage = (e) => {
-            if (e.key === CHECKOUT_LOCK_KEY && !e.newValue) {
-                window.removeEventListener('storage', onStorage)
-                resolve()
-            }
-        }
-        window.addEventListener('storage', onStorage)
-    })
-// ─────────────────────────────────────────────────────────────────────────
-
 export default function CheckoutPage() {
     const navigate = useNavigate()
     const [searchParams] = useSearchParams()
@@ -69,14 +48,7 @@ export default function CheckoutPage() {
     const eventId = searchParams.get('eventId')
     const ticketsParam = searchParams.get('tickets')
 
-    const selectedTickets = useMemo(() => {
-        if (!ticketsParam) return {};
-        try {
-            return JSON.parse(ticketsParam);
-        } catch {
-            return {};
-        }
-    }, [ticketsParam]);
+    const selectedTickets = useMemo(() => parseTicketSelection(ticketsParam), [ticketsParam])
 
     const [event, setEvent] = useState(null)
     const [tickets, setTickets] = useState([])
@@ -88,41 +60,37 @@ export default function CheckoutPage() {
     const [checkoutError, setCheckoutError] = useState('')
     const [processing, setProcessing] = useState(false)
     const [showTerms, setShowTerms] = useState(false)
-    const [waitingForTab, setWaitingForTab] = useState(false)
-    const [sessionExpired, setSessionExpired] = useState(false)
     const submittingRef = useRef(false)
 
-    // On bfcache restore (browser Back): reset processing + pre-fill form from session
+    // Pre-fill form fields from a stored session (e.g. returning from Stripe via Back button)
     useEffect(() => {
-        const handlePageShow = (e) => {
+        const session = readCheckoutSession()
+        if (!session) return
+        const expiresAt = session.expiresAt ? new Date(session.expiresAt) : null
+        if (!expiresAt || expiresAt <= new Date() || session.eventId !== eventId) {
+            clearCheckoutSession()
+            return
+        }
+        if (session.name) setName(session.name)
+        if (session.email) setEmail(session.email)
+        if (session.phone) setPhone(session.phone)
+    }, [eventId])
+
+    // When restored from bfcache (browser Back from Stripe), reset processing state
+    useEffect(() => {
+        const onPageShow = (e) => {
             if (!e.persisted) return
-            // Reset processing so the Pay button is usable again
             setProcessing(false)
             submittingRef.current = false
-            // Pre-fill form fields from stored session (in case React state was stale)
-            try {
-                const raw = sessionStorage.getItem('tt_hold')
-                if (raw) {
-                    const hold = JSON.parse(raw)
-                    const expiresAt = hold.expiresAt ? new Date(hold.expiresAt) : null
-                    if (hold.eventId === eventId && expiresAt && expiresAt > new Date()) {
-                        if (hold.name) setName(hold.name)
-                        if (hold.email) setEmail(hold.email)
-                        if (hold.phone) setPhone(hold.phone)
-                    }
-                }
-            } catch {}
         }
-        window.addEventListener('pageshow', handlePageShow)
-        return () => window.removeEventListener('pageshow', handlePageShow)
-    }, [eventId])
+        window.addEventListener('pageshow', onPageShow)
+        return () => window.removeEventListener('pageshow', onPageShow)
+    }, [])
 
     useEffect(() => {
         if (!eventId || Object.keys(selectedTickets).length === 0) {
-            const timer = setTimeout(() => {
-                if (!eventId || Object.keys(selectedTickets).length === 0) navigate('/')
-            }, 100);
-            return () => clearTimeout(timer);
+            navigate('/')
+            return
         }
 
         axios.get(API_ENDPOINTS.event(eventId))
@@ -138,60 +106,28 @@ export default function CheckoutPage() {
                     setCheckoutError('Selected tickets not found. They may have been removed.')
                 } else {
                     setTickets(selected)
-                    // Pre-fill form if returning from Stripe with a valid hold
-                    try {
-                        const raw = sessionStorage.getItem('tt_hold')
-                        if (raw) {
-                            const hold = JSON.parse(raw)
-                            const expiresAt = hold.expiresAt ? new Date(hold.expiresAt) : null
-                            if (hold.eventId === eventId && expiresAt && expiresAt > new Date()) {
-                                if (hold.name) setName(hold.name)
-                                if (hold.email) setEmail(hold.email)
-                                if (hold.phone) setPhone(hold.phone)
-                            }
-                        }
-                    } catch {}
                 }
             })
             .catch(() => setCheckoutError('Failed to load event details.'))
             .finally(() => setLoading(false))
     }, [eventId, selectedTickets, navigate])
 
-    // Auto-redirect home when session expired
-    useEffect(() => {
-        if (!sessionExpired) return
-        const t = setTimeout(() => navigate(eventId ? `/events/${eventId}` : '/'), 3000)
-        return () => clearTimeout(t)
-    }, [sessionExpired, navigate, eventId])
-
-    // Step 1: check existing session first, then validate form → show T&C (only for new sessions)
+    // Step 1: if session has valid stripeUrl for same tickets → go directly; else validate → show T&C
     const handleCheckout = (e) => {
         e.preventDefault()
         if (submittingRef.current || processing) return
 
-        // Check existing session FIRST — user already accepted T&C when session was created
-        try {
-            const raw = sessionStorage.getItem('tt_hold')
-            if (raw) {
-                const hold = JSON.parse(raw)
-                const expiresAt = hold.expiresAt ? new Date(hold.expiresAt) : null
-                if (hold.stripeUrl && expiresAt) {
-                    if (expiresAt > new Date()) {
-                        // Valid — go straight back to Stripe, skip T&C and form validation
-                        window.location.href = hold.stripeUrl
-                        return
-                    } else {
-                        // Expired — clear storage + lock, then show expired screen
-                        sessionStorage.removeItem('tt_hold')
-                        releaseLock()
-                        setSessionExpired(true)
-                        return
-                    }
-                }
+        // Resume existing Stripe session if tickets unchanged and session not expired
+        const session = readCheckoutSession()
+        if (session?.eventId === eventId && session.stripeUrl && session.ticketsParam === ticketsParam) {
+            const expiresAt = session.expiresAt ? new Date(session.expiresAt) : null
+            if (expiresAt && expiresAt > new Date()) {
+                window.location.href = session.stripeUrl
+                return
             }
-        } catch {}
+            clearCheckoutSession()
+        }
 
-        // No existing session — validate form then show T&C
         if (!name.trim() || name.trim().split(/\s+/).length < 2) {
             setNameError('Enter your full name — e.g. John Doe')
             return
@@ -205,43 +141,10 @@ export default function CheckoutPage() {
         setShowTerms(true)
     }
 
-    // Step 2: user accepted T&C → check existing session or call API
+    // Step 2: user accepted T&C → call API → redirect to Stripe
     const handleAcceptTerms = async () => {
         setShowTerms(false)
         if (submittingRef.current || processing) return
-
-        // ── Check for existing valid session first ────────────────────────────
-        try {
-            const raw = sessionStorage.getItem('tt_hold')
-            if (raw) {
-                const hold = JSON.parse(raw)
-                const expiresAt = hold.expiresAt ? new Date(hold.expiresAt) : null
-                if (hold.eventId === eventId && hold.stripeUrl && expiresAt) {
-                    if (expiresAt > new Date()) {
-                        // Valid — send back to same Stripe session (no new API call)
-                        window.location.href = hold.stripeUrl
-                        return
-                    } else {
-                        // Expired — clear storage + lock, then show expired screen
-                        sessionStorage.removeItem('tt_hold')
-                        releaseLock()
-                        setSessionExpired(true)
-                        return
-                    }
-                }
-            }
-        } catch {}
-
-        // ── No existing session — create new checkout ─────────────────────────
-        if (!tryAcquireLock()) {
-            setWaitingForTab(true)
-            await waitForLock()
-            setWaitingForTab(false)
-            if (!tryAcquireLock()) {
-                setCheckoutError('Another checkout just completed. Please try again.')
-                return
-            }
-        }
 
         submittingRef.current = true
         setProcessing(true)
@@ -266,20 +169,10 @@ export default function CheckoutPage() {
 
             if (!data.url) throw new Error('No redirect URL received from server.')
 
-            if (data.hold_expires_at) {
-                sessionStorage.setItem('tt_hold', JSON.stringify({
-                    sessionId: data.session_id,
-                    expiresAt: data.hold_expires_at,
-                    stripeUrl: data.url,
-                    eventId,
-                    ticketsParam,
-                    name,
-                    email,
-                    phone,
-                }))
-            }
+            // Save session so returning from Stripe pre-fills form and can resume the same URL
+            const expiresAt = new Date(Date.now() + CHECKOUT_SESSION_TTL_MS).toISOString()
+            saveCheckoutSession({ eventId, ticketsParam, stripeUrl: data.url, name, email, phone, expiresAt })
 
-            releaseLock()
             window.location.href = data.url
         } catch (err) {
             const detail = err.response?.data?.detail;
@@ -302,36 +195,12 @@ export default function CheckoutPage() {
                 errMsg = detail.map(d => `${d.loc?.[d.loc.length - 1] || 'Field'}: ${d.msg}`).join(', ');
             }
             setCheckoutError(errMsg);
-            releaseLock()
             submittingRef.current = false
             setProcessing(false)
         }
     }
 
     if (loading) return <CheckoutSkeleton />
-
-    // ── Session expired state ─────────────────────────────────────────────────
-    if (sessionExpired) {
-        return (
-            <div className="flex-1 flex items-center justify-center p-5 py-12 min-h-[70vh] bg-app-bg animate-fade-up">
-                <div className="max-w-sm w-full p-6 text-center bg-app-surface border border-app-border rounded-[1.25rem] shadow-organic">
-                    <div className="w-12 h-12 bg-red-50 rounded-xl flex items-center justify-center mx-auto mb-5 border border-red-100">
-                        <Clock size={24} className="text-red-400" />
-                    </div>
-                    <h1 className="font-outfit text-xl font-bold text-app-text mb-2">Session Expired</h1>
-                    <p className="text-app-text-muted text-[13px] mb-6 leading-relaxed">
-                        Your ticket reservation has expired. Returning to home...
-                    </p>
-                    <Link
-                        to={eventId ? `/events/${eventId}` : '/'}
-                        className="w-full flex items-center justify-center gap-2 bg-app-surface text-app-text font-bold py-3 rounded-lg hover:bg-app-surface-2 transition-colors border border-app-border text-[13px] shadow-sm"
-                    >
-                        <ArrowLeft size={14} /> {eventId ? 'Back to Event' : 'Back to Directory'}
-                    </Link>
-                </div>
-            </div>
-        )
-    }
 
     if (!event || tickets.length === 0) {
         return (
@@ -364,19 +233,7 @@ export default function CheckoutPage() {
     return (
         <>
         <div className="max-w-4xl mx-auto py-8 px-5 lg:px-8 animate-fade-up bg-app-bg">
-            <button onClick={() => {
-                try {
-                    const raw = sessionStorage.getItem('tt_hold')
-                    if (raw) {
-                        const hold = JSON.parse(raw)
-                        sessionStorage.removeItem('tt_hold')
-                        if (hold.sessionId) {
-                            axios.post(API_ENDPOINTS.releaseHold(hold.sessionId)).catch(() => {})
-                        }
-                    }
-                } catch {}
-                navigate(eventId ? `/events/${eventId}` : '/')
-            }} className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.15em] text-app-text-muted hover:text-app-text mb-6 transition-colors group">
+            <button onClick={() => navigate(eventId ? `/events/${eventId}` : '/')} className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.15em] text-app-text-muted hover:text-app-text mb-6 transition-colors group">
                 <ArrowLeft size={12} className="transition-transform group-hover:-translate-x-1" /> Back
             </button>
 
@@ -460,15 +317,10 @@ export default function CheckoutPage() {
                             <div className="pt-5 border-t border-app-border">
                                 <button
                                     type="submit"
-                                    disabled={processing || waitingForTab}
+                                    disabled={processing}
                                     className="w-full flex items-center justify-center gap-2 bg-app-text text-app-surface font-bold py-3 rounded-lg hover:bg-[#1A1817] transition-colors disabled:opacity-50 disabled:pointer-events-none text-[13px] shadow-organic"
                                 >
-                                    {waitingForTab ? (
-                                        <>
-                                            <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
-                                            Waiting for another tab...
-                                        </>
-                                    ) : processing ? (
+                                    {processing ? (
                                         <>
                                             <div className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
                                             Processing...
@@ -568,16 +420,6 @@ export default function CheckoutPage() {
                     <div className="overflow-y-auto p-5 space-y-4">
 
                         <div className="flex gap-3">
-                            <span className="text-xl shrink-0">⏱</span>
-                            <div>
-                                <p className="font-bold text-app-text text-[13px] mb-1">10-Minute Reservation</p>
-                                <p className="text-[12px] text-app-text-muted leading-relaxed">
-                                    Once you proceed, your tickets are reserved for <strong>10 minutes</strong>. If payment is not completed in time, your reservation is released and tickets become available to others.
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="flex gap-3">
                             <span className="text-xl shrink-0">🚫</span>
                             <div>
                                 <p className="font-bold text-app-text text-[13px] mb-1">No Refunds</p>
@@ -623,10 +465,10 @@ export default function CheckoutPage() {
                     <div className="p-5 border-t border-app-border shrink-0 space-y-2.5">
                         <button
                             onClick={handleAcceptTerms}
-                            disabled={processing || waitingForTab}
+                            disabled={processing}
                             className="w-full bg-app-text text-app-surface font-bold py-3 rounded-xl text-[13px] hover:bg-[#1A1817] transition-colors shadow-organic disabled:opacity-50 disabled:pointer-events-none"
                         >
-                            {waitingForTab ? 'Waiting for another tab...' : totalPrice === 0 ? 'I Accept — Get Free Ticket' : 'I Accept — Continue to Payment'}
+                            {totalPrice === 0 ? 'I Accept — Get Free Ticket' : 'I Accept — Continue to Payment'}
                         </button>
                         <button
                             onClick={() => setShowTerms(false)}

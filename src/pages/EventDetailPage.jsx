@@ -1,9 +1,16 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import axios from 'axios'
 import { ArrowLeft, CalendarDays, MapPin, Ticket, Clock, Users, ExternalLink, AlertCircle, Plus, Minus, ChevronDown } from 'lucide-react'
-import { useRef } from 'react'
 import { API_ENDPOINTS } from '../config/api'
+import {
+    CHECKOUT_SESSION_TTL_MS,
+    clearCheckoutSession,
+    getCheckoutSessionState,
+    parseTicketSelection,
+    readCheckoutSession,
+    saveCheckoutSession,
+} from '../utils/checkoutSession'
 
 function EventSkeleton() {
     return (
@@ -64,7 +71,42 @@ export default function EventDetailPage() {
     const descriptionRef = useRef(null)
     const [showScrollIndicator, setShowScrollIndicator] = useState(false)
 
+    const restoreTicketsFromSession = useCallback(() => {
+        const sessionState = getCheckoutSessionState({
+            eventId,
+            ttlMs: CHECKOUT_SESSION_TTL_MS,
+        })
+
+        if (sessionState.status === 'expired' || sessionState.status === 'mismatch') {
+            clearCheckoutSession()
+            return
+        }
+
+        if (sessionState.status !== 'valid') return
+
+        if (sessionState.normalized) {
+            saveCheckoutSession(sessionState.session)
+        }
+
+        const restored = parseTicketSelection(sessionState.session.ticketsParam)
+        if (Object.keys(restored).length === 0) return
+
+        setSelectedTickets(prev => (
+            Object.keys(prev).length > 0 ? prev : restored
+        ))
+    }, [eventId])
+
     const handleQuantityChange = (ttId, delta, available, maxPerOrder) => {
+        // If user changes tickets, the existing Stripe URL is stale — clear it
+        // (keeps name/email/phone in session for form pre-fill, but forces new checkout)
+        try {
+            const session = readCheckoutSession()
+            if (session?.eventId === eventId && session.stripeUrl) {
+                delete session.stripeUrl
+                saveCheckoutSession(session)
+            }
+        } catch {}
+
         setSelectedTickets(prev => {
             const current = prev[ttId] || 0;
             const maxAllowed = Math.min(maxPerOrder, available);
@@ -79,39 +121,12 @@ export default function EventDetailPage() {
     }
 
     useEffect(() => {
-        // Two-speed polling strategy:
-        //   30s when holds active (time-sensitive — tracks expiry accurately)
-        //   60s when no holds (saves requests when idle)
-        const POLL_SLOW = 60000
-        const POLL_FAST = 30000
+        restoreTicketsFromSession()
 
-        let timer = null
-
-        const schedulePoll = (hasHolds) => {
-            clearTimeout(timer)
-            timer = setTimeout(fetchAndReschedule, hasHolds ? POLL_FAST : POLL_SLOW)
-        }
-
-        const fetchAndReschedule = () => {
-            if (document.visibilityState === 'hidden') return
-            axios.get(API_ENDPOINTS.event(eventId))
-                .then(({ data }) => {
-                    setEvent(data)
-                    const hasHolds = (data?.ticket_types || []).some(t => t.held_count > 0)
-                    schedulePoll(hasHolds)
-                })
-                .catch((err) => {
-                    if (err.response?.status === 404) navigate('/')
-                })
-        }
-
-        // Initial load — fetch immediately, then schedule polling
         axios.get(API_ENDPOINTS.event(eventId))
             .then(({ data }) => {
                 setEvent(data)
                 if (data?.name) document.title = data.name
-                const hasHolds = (data?.ticket_types || []).some(t => t.held_count > 0)
-                schedulePoll(hasHolds)
             })
             .catch((err) => {
                 if (err.response?.status === 404) navigate('/')
@@ -119,26 +134,26 @@ export default function EventDetailPage() {
             })
             .finally(() => setLoading(false))
 
-        // Resume immediately when tab becomes visible
+        return () => { document.title = 'Events' }
+    }, [eventId, navigate, restoreTicketsFromSession])
+
+    useEffect(() => {
+        const onPageShow = () => restoreTicketsFromSession()
+        const onFocus = () => restoreTicketsFromSession()
         const onVisibilityChange = () => {
-            if (document.visibilityState === 'visible') fetchAndReschedule()
+            if (document.visibilityState === 'visible') restoreTicketsFromSession()
         }
+
+        window.addEventListener('pageshow', onPageShow)
+        window.addEventListener('focus', onFocus)
         document.addEventListener('visibilitychange', onVisibilityChange)
 
-        // Re-fetch when browser restores page from bfcache (Back button from Stripe)
-        // Without this, the frozen DOM snapshot shows stale data (Sold Out instead of being processed)
-        const onPageShow = (e) => {
-            if (e.persisted) fetchAndReschedule()
-        }
-        window.addEventListener('pageshow', onPageShow)
-
         return () => {
-            clearTimeout(timer)
-            document.removeEventListener('visibilitychange', onVisibilityChange)
             window.removeEventListener('pageshow', onPageShow)
-            document.title = 'Events'
+            window.removeEventListener('focus', onFocus)
+            document.removeEventListener('visibilitychange', onVisibilityChange)
         }
-    }, [eventId])
+    }, [restoreTicketsFromSession])
 
     // Scroll indicator check
     useEffect(() => {
@@ -187,7 +202,7 @@ export default function EventDetailPage() {
         </div>
     )
 
-    const totalSold     = (event.total_sold || 0) + (event.total_held || 0)
+    const totalSold     = event.total_sold || 0
     const totalCapacity = event.total_capacity || 0
     const percentTotal = totalCapacity > 0 ? Math.min(100, (totalSold / totalCapacity) * 100) : 0
 
@@ -280,10 +295,8 @@ export default function EventDetailPage() {
                                     const sold = tt.quantity_sold || 0
                                     const available = tt.quantity_available != null ? tt.quantity_available : Math.max(0, capacity - sold)
                                     const percent = capacity > 0 ? Math.min(100, (sold / capacity) * 100) : 0
-                                    const held = tt.held_count || 0
                                     const isLow = available > 0 && available <= 10
-                                    const isHeldOut = available <= 0 && held > 0
-                                    const isSoldOut = available <= 0 && held === 0 && capacity > 0
+                                    const isSoldOut = available <= 0 && capacity > 0
                                     const minPerOrder = tt.min_per_order || 1
                                     const maxPerOrder = tt.max_per_order > 0 ? tt.max_per_order : available
 
@@ -291,9 +304,6 @@ export default function EventDetailPage() {
                                         <div key={tt.id} className="group bg-app-surface border border-app-border p-4 rounded-[1.25rem] hover:border-brand-400/40 hover:shadow-organic transition-all duration-300 relative overflow-hidden">
                                             {isSoldOut && (
                                                 <div className="absolute inset-0 bg-app-surface-2/50 pointer-events-none" />
-                                            )}
-                                            {isHeldOut && (
-                                                <div className="absolute inset-0 bg-amber-50/40 pointer-events-none" />
                                             )}
 
                                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 relative z-10">
@@ -304,8 +314,6 @@ export default function EventDetailPage() {
                                                     <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider font-bold">
                                                         {isSoldOut ? (
                                                             <span className="text-red-500 bg-red-50 px-2 py-0.5 rounded">Sold Out</span>
-                                                        ) : isHeldOut ? (
-                                                            <span className="text-amber-600 bg-amber-100 px-2 py-0.5 rounded">⏳ {held} being processed</span>
                                                         ) : sold === 0 ? (
                                                             <span className="text-brand-600 bg-brand-600/10 px-2 py-0.5 rounded">New Release</span>
                                                         ) : (
@@ -316,17 +324,7 @@ export default function EventDetailPage() {
                                                                 {isLow ? `Last ${available}` : `${available} left`}
                                                             </span>
                                                         )}
-                                                        {held > 0 && !isHeldOut && (
-                                                            <span className="text-amber-600 bg-amber-50 px-2 py-0.5 rounded">
-                                                                🔒 {held} being reserved
-                                                            </span>
-                                                        )}
                                                     </div>
-                                                    {isHeldOut && (
-                                                        <p className="text-[10px] text-amber-600 mt-1.5 normal-case tracking-normal font-medium">
-                                                            May become available — page updates automatically
-                                                        </p>
-                                                    )}
                                                 </div>
 
                                                 <div className="flex items-center justify-between sm:justify-end gap-4 shrink-0">
@@ -463,8 +461,7 @@ export default function EventDetailPage() {
                             const allSoldOut = event.ticket_types.every(tt => {
                                 const cap = tt.quantity || 0
                                 const avail = tt.quantity_available != null ? tt.quantity_available : Math.max(0, cap - (tt.quantity_sold || 0))
-                                const hld = tt.held_count || 0
-                                return avail <= 0 && hld === 0 && cap > 0
+                                return avail <= 0 && cap > 0
                             })
                             return (
                                 <div className="relative z-10">

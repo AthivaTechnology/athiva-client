@@ -3,6 +3,7 @@ import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { CheckCircle, XCircle, AlertCircle, Mail, CalendarDays, ArrowRight } from 'lucide-react'
 import axios from 'axios'
 import { API_ENDPOINTS } from '../config/api'
+import { clearCheckoutSession } from '../utils/checkoutSession'
 
 export default function CheckoutSuccessPage() {
     const [searchParams] = useSearchParams()
@@ -32,16 +33,16 @@ export default function CheckoutSuccessPage() {
                 lastKnownStatus = data.status
 
                 if (data.status === 'complete') {
-                    sessionStorage.removeItem('tt_hold')
+                    clearCheckoutSession()
                     setSessionData(data)
                     setStatus('success')
                     document.title = 'Booking Confirmed'
                 } else if (data.status === 'refunded') {
-                    sessionStorage.removeItem('tt_hold')
+                    clearCheckoutSession()
                     setSessionData(data)
                     setStatus('refunded')
                 } else if (data.status === 'failed') {
-                    sessionStorage.removeItem('tt_hold')
+                    clearCheckoutSession()
                     setSessionData(data)
                     setStatus('failed')
                 } else if (data.status === 'expired') {
@@ -60,6 +61,7 @@ export default function CheckoutSuccessPage() {
                 } else {
                     // Exhausted all attempts — if backend was already recovering,
                     // show amber "still confirming" instead of red "payment failed"
+                    clearCheckoutSession()
                     setSessionData(data)
                     const timedOutGracefully = ['pending_recovery', 'processing'].includes(lastKnownStatus)
                     setStatus(timedOutGracefully ? 'pending_timeout' : 'failed')

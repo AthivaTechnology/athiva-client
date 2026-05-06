@@ -148,16 +148,14 @@ export default function HomePage() {
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 md:gap-6">
                                     {filtered.map((ev) => {
                                         const sold      = ev.total_sold || 0
-                                        const held      = ev.total_held || 0
                                         const total     = ev.total_capacity || 0
                                         const remaining = ev.total_remaining || 0
-                                        const percent   = total > 0 ? Math.min(100, ((sold + held) / total) * 100) : 0
+                                        const percent   = total > 0 ? Math.min(100, (sold / total) * 100) : 0
                                         const dateInfo  = formatDate(ev.start?.unix)
                                         const endInfo   = formatDate(ev.end?.unix)
                                         const price     = getLowestPrice(ev.ticket_types)
 
-                                        const isSoldOut   = total > 0 && remaining === 0 && held === 0
-                                        const isHeldOut   = total > 0 && remaining === 0 && held > 0
+                                        const isSoldOut   = total > 0 && remaining === 0
                                         const isLow       = total > 0 && remaining > 0 && remaining <= 5
 
                                         return (
@@ -236,11 +234,6 @@ export default function HomePage() {
                                                                 <div className="flex items-center justify-between">
                                                                     <span className="text-[10px] font-bold text-red-500 uppercase tracking-wider">Sold Out</span>
                                                                     <span className="text-[10px] font-bold text-brand-600 uppercase tracking-wider">Join Waitlist →</span>
-                                                                </div>
-                                                            ) : isHeldOut ? (
-                                                                <div className="flex items-center justify-between">
-                                                                    <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">⏳ Being processed</span>
-                                                                    <span className="text-[10px] font-bold text-app-text-faint uppercase tracking-wider">Check back soon</span>
                                                                 </div>
                                                             ) : (
                                                                 <>
