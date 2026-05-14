@@ -10,7 +10,7 @@ export default function CheckoutSuccessPage() {
     const navigate = useNavigate()
     const sessionId = searchParams.get('session_id')
 
-    const [status, setStatus] = useState('loading') // loading | success | failed | error | pending_timeout | refunded
+    const [status, setStatus] = useState('loading') // loading | pending_recovery | success | failed | error | pending_timeout | refunded
     const [sessionData, setSessionData] = useState(null)
 
     useEffect(() => {
@@ -22,7 +22,7 @@ export default function CheckoutSuccessPage() {
         let attempts = 0
         const maxAttempts = 10
         let cancelled = false
-        let lastKnownStatus = 'pending'
+        // Removed lastKnownStatus since we handle pending_recovery explicitly
 
         async function pollSession() {
             if (cancelled) return
@@ -30,7 +30,7 @@ export default function CheckoutSuccessPage() {
                 const { data } = await axios.get(API_ENDPOINTS.checkoutSession(sessionId))
                 if (cancelled) return
 
-                lastKnownStatus = data.status
+
 
                 if (data.status === 'complete') {
                     clearCheckoutSession()
@@ -53,18 +53,25 @@ export default function CheckoutSuccessPage() {
                         setTimeout(pollSession, 3000)
                     } else {
                         setSessionData(data)
+                        setStatus('refunded')
+                    }
+                } else if (data.status === 'pending_recovery') {
+                    setStatus('pending_recovery')
+                    if (attempts < maxAttempts) {
+                        attempts++
+                        setTimeout(pollSession, 3000)
+                    } else {
+                        setSessionData(data)
                         setStatus('pending_timeout')
                     }
                 } else if (attempts < maxAttempts) {
                     attempts++
                     setTimeout(pollSession, 3000)
                 } else {
-                    // Exhausted all attempts — if backend was already recovering,
-                    // show amber "still confirming" instead of red "payment failed"
+                    // Exhausted all attempts on 'pending'
                     clearCheckoutSession()
                     setSessionData(data)
-                    const timedOutGracefully = ['pending_recovery', 'processing'].includes(lastKnownStatus)
-                    setStatus(timedOutGracefully ? 'pending_timeout' : 'failed')
+                    setStatus('failed')
                 }
             } catch (err) {
                 if (cancelled) return
@@ -94,6 +101,18 @@ export default function CheckoutSuccessPage() {
                     </p>
                     <p className="text-[13px] text-app-text-muted">
                         Please wait a moment.
+                    </p>
+                </div>
+            )}
+
+            {status === 'pending_recovery' && (
+                <div className="text-center animate-fade-up flex flex-col items-center">
+                    <div className="w-10 h-10 rounded-full border-2 border-app-surface-2 border-t-amber-500 animate-spin mb-5" />
+                    <p className="font-outfit text-lg font-bold text-app-text mb-1">
+                        Verifying Payment...
+                    </p>
+                    <p className="text-[13px] text-app-text-muted max-w-xs mx-auto">
+                        Please wait a few minutes while we verify your payment. Your tickets will be emailed to you shortly.
                     </p>
                 </div>
             )}

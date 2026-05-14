@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useSearchParams, useNavigate, Link } from 'react-router-dom'
 import axios from 'axios'
 import {
     MapPin, Clock, CalendarDays, ArrowLeft,
-    ShieldCheck, AlertCircle
+    ShieldCheck, AlertCircle, PenLine, Check, Type, ChevronDown
 } from 'lucide-react'
 import { API_ENDPOINTS } from '../config/api'
 import {
@@ -55,14 +56,28 @@ export default function CheckoutPage() {
     const [loading, setLoading] = useState(true)
     const [name, setName] = useState('')
     const [email, setEmail] = useState('')
+    const [repeatEmail, setRepeatEmail] = useState('')
     const [phone, setPhone] = useState('')
     const [nameError, setNameError] = useState('')
+    const [emailError, setEmailError] = useState('')
     const [checkoutError, setCheckoutError] = useState('')
     const [processing, setProcessing] = useState(false)
-    const [showTerms, setShowTerms] = useState(false)
+    const [termsAccepted, setTermsAccepted] = useState(false)
+    const [termsExpanded, setTermsExpanded] = useState(false)
     const submittingRef = useRef(false)
 
-    // Pre-fill form fields from a stored session (e.g. returning from Stripe via Back button)
+    // Signature state
+    const canvasRef = useRef(null)
+    const isDrawingRef = useRef(false)
+    const [hasSigned, setHasSigned] = useState(false)
+    const [signatureError, setSignatureError] = useState('')
+    const [signatureTab, setSignatureTab] = useState('draw') // 'draw' | 'type'
+    const [typedSignature, setTypedSignature] = useState('')
+    const [sigModalOpen, setSigModalOpen] = useState(false)
+    const [signatureAccepted, setSignatureAccepted] = useState(false) // true after Accept in modal
+    const [signatureDataUrl, setSignatureDataUrl] = useState(null) // captured PNG at Accept time
+
+    // Pre-fill form fields from a stored session
     useEffect(() => {
         const session = readCheckoutSession()
         if (!session) return
@@ -72,11 +87,11 @@ export default function CheckoutPage() {
             return
         }
         if (session.name) setName(session.name)
-        if (session.email) setEmail(session.email)
+        if (session.email) { setEmail(session.email); setRepeatEmail(session.email) }
         if (session.phone) setPhone(session.phone)
     }, [eventId])
 
-    // When restored from bfcache (browser Back from Stripe), reset processing state
+    // Reset processing state when restoring from bfcache (Back from Stripe)
     useEffect(() => {
         const onPageShow = (e) => {
             if (!e.persisted) return
@@ -112,12 +127,45 @@ export default function CheckoutPage() {
             .finally(() => setLoading(false))
     }, [eventId, selectedTickets, navigate])
 
-    // Step 1: if session has valid stripeUrl for same tickets → go directly; else validate → show T&C
-    const handleCheckout = (e) => {
+    // ── Canvas drawing helpers ────────────────────────────────────────────────
+    const startDraw = (e) => {
+        isDrawingRef.current = true
+        const ctx = canvasRef.current.getContext('2d')
+        ctx.beginPath()
+        ctx.moveTo(e.nativeEvent.offsetX, e.nativeEvent.offsetY)
+    }
+    const draw = (e) => {
+        if (!isDrawingRef.current) return
+        const ctx = canvasRef.current.getContext('2d')
+        ctx.lineWidth = 2
+        ctx.lineCap = 'round'
+        ctx.strokeStyle = '#1a1817'
+        ctx.lineTo(e.nativeEvent.offsetX, e.nativeEvent.offsetY)
+        ctx.stroke()
+        setHasSigned(true)
+        if (signatureError) setSignatureError('')
+    }
+    const stopDraw = () => { isDrawingRef.current = false }
+
+    const getTouchPos = (canvas, touch) => {
+        const rect = canvas.getBoundingClientRect()
+        return { x: touch.clientX - rect.left, y: touch.clientY - rect.top }
+    }
+
+    const clearCanvas = () => {
+        const canvas = canvasRef.current
+        if (!canvas) return
+        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height)
+        setHasSigned(false)
+        setSignatureError('')
+    }
+
+    // Validate → call API → redirect to Stripe
+    const handleCheckout = async (e) => {
         e.preventDefault()
         if (submittingRef.current || processing) return
 
-        // Resume existing Stripe session if tickets unchanged and session not expired
+        // Resume existing Stripe session if tickets unchanged and not expired
         const session = readCheckoutSession()
         if (session?.eventId === eventId && session.stripeUrl && session.ticketsParam === ticketsParam) {
             const expiresAt = session.expiresAt ? new Date(session.expiresAt) : null
@@ -128,35 +176,56 @@ export default function CheckoutPage() {
             clearCheckoutSession()
         }
 
+        let hasError = false
+
         if (!name.trim() || name.trim().split(/\s+/).length < 2) {
             setNameError('Enter your full name — e.g. John Doe')
-            return
+            hasError = true
+        } else {
+            setNameError('')
         }
-        setNameError('')
+
         if (!email) {
-            setCheckoutError('Please enter your email address.')
+            setEmailError('Please enter your email address.')
+            hasError = true
+        } else if (repeatEmail && email.toLowerCase() !== repeatEmail.toLowerCase()) {
+            setEmailError('Email addresses do not match.')
+            hasError = true
+        } else {
+            setEmailError('')
+        }
+
+        if (hasError) return
+
+        const hasTerms = event?.terms?.has_terms
+
+        if (hasTerms && !termsAccepted) {
+            setCheckoutError('Please agree to the event waiver to continue.')
             return
         }
         setCheckoutError('')
-        setShowTerms(true)
-    }
 
-    // Step 2: user accepted T&C → call API → redirect to Stripe
-    const handleAcceptTerms = async () => {
-        setShowTerms(false)
-        if (submittingRef.current || processing) return
+        // Validate signature only if event has a waiver
+        let termsSignature
+        if (hasTerms) {
+            if (!signatureAccepted || !signatureDataUrl) {
+                setSignatureError('Please add your signature before proceeding.')
+                return
+            }
+            setSignatureError('')
+            termsSignature = signatureDataUrl
+        }
 
         submittingRef.current = true
         setProcessing(true)
-        setCheckoutError('')
 
         try {
             const items = tickets.map(t => ({
                 ticket_type_id: t.id,
                 quantity: selectedTickets[t.id]
-            }));
+            }))
 
-            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
 
             const { data } = await axios.post(API_ENDPOINTS.checkoutCreate(), {
                 event_id: eventId,
@@ -164,37 +233,37 @@ export default function CheckoutPage() {
                 customer_email: email,
                 customer_name: name,
                 customer_phone: phone,
-                customer_timezone: tz
+                customer_timezone: tz,
+                ...(hasTerms && { terms_accepted: true, terms_signature: termsSignature }),
             })
 
             if (!data.url) throw new Error('No redirect URL received from server.')
 
-            // Save session so returning from Stripe pre-fills form and can resume the same URL
             const expiresAt = new Date(Date.now() + CHECKOUT_SESSION_TTL_MS).toISOString()
             saveCheckoutSession({ eventId, ticketsParam, stripeUrl: data.url, name, email, phone, expiresAt })
 
             window.location.href = data.url
         } catch (err) {
-            const detail = err.response?.data?.detail;
-            let errMsg = 'Failed to initiate checkout. Please try again.';
+            const detail = err.response?.data?.detail
+            let errMsg = 'Failed to initiate checkout. Please try again.'
             if (typeof detail === 'string') {
                 if (detail.includes('Ticket Tailor issuance failed')) {
-                    let ttMessage = detail;
+                    let ttMessage = detail
                     try {
-                        const jsonStrMatch = detail.match(/\{.*\}/);
+                        const jsonStrMatch = detail.match(/\{.*\}/)
                         if (jsonStrMatch) {
-                            const parsed = JSON.parse(jsonStrMatch[0]);
-                            if (parsed.message) ttMessage = parsed.message;
+                            const parsed = JSON.parse(jsonStrMatch[0])
+                            if (parsed.message) ttMessage = parsed.message
                         }
                     } catch {}
-                    errMsg = `Organizer configuration issue: We could not issue your ticket. Please contact the event organizer. (${ttMessage})`;
+                    errMsg = `Organizer configuration issue: We could not issue your ticket. Please contact the event organizer. (${ttMessage})`
                 } else {
-                    errMsg = detail;
+                    errMsg = detail
                 }
             } else if (Array.isArray(detail)) {
-                errMsg = detail.map(d => `${d.loc?.[d.loc.length - 1] || 'Field'}: ${d.msg}`).join(', ');
+                errMsg = detail.map(d => `${d.loc?.[d.loc.length - 1] || 'Field'}: ${d.msg}`).join(', ')
             }
-            setCheckoutError(errMsg);
+            setCheckoutError(errMsg)
             submittingRef.current = false
             setProcessing(false)
         }
@@ -217,7 +286,7 @@ export default function CheckoutPage() {
         )
     }
 
-    const totalPrice = tickets.reduce((sum, t) => sum + ((t.price || 0) / 100 * selectedTickets[t.id]), 0);
+    const totalPrice = tickets.reduce((sum, t) => sum + ((t.price || 0) / 100 * selectedTickets[t.id]), 0)
 
     const formatTime12h = (timeStr) => {
         if (!timeStr) return ''
@@ -230,17 +299,16 @@ export default function CheckoutPage() {
     const d = event.start?.date ? new Date(event.start.date) : null
     const dateStr = d ? d.toLocaleDateString('en-GB', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : null
 
+    const termsHtml = event?.terms?.terms_html
+
     return (
-        <>
         <div className="max-w-4xl mx-auto py-8 px-5 lg:px-8 animate-fade-up bg-app-bg">
             <button onClick={() => navigate(eventId ? `/events/${eventId}` : '/')} className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.15em] text-app-text-muted hover:text-app-text mb-6 transition-colors group">
                 <ArrowLeft size={12} className="transition-transform group-hover:-translate-x-1" /> Back
             </button>
 
             <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8 border-b border-app-border pb-6">
-                <div>
-                    <h1 className="font-outfit text-2xl md:text-3xl font-bold text-app-text tracking-tight">Checkout</h1>
-                </div>
+                <h1 className="font-outfit text-2xl md:text-3xl font-bold text-app-text tracking-tight">Checkout</h1>
                 <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-100 flex-shrink-0">
                     <ShieldCheck size={14} className="text-emerald-500" /> Secure SSL
                 </div>
@@ -248,9 +316,9 @@ export default function CheckoutPage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-start">
 
-                {/* ─── Left Column: Payment Form ─── */}
-                <div className="lg:col-span-7 order-2 lg:order-1">
-                    <div className="p-5 md:p-6 bg-app-surface border border-app-border shadow-organic rounded-[1.25rem]">
+                {/* ─── Left Column: Form ─── */}
+                <div className="lg:col-span-7 order-2 lg:order-1 min-w-0">
+                    <div className="p-5 md:p-6 bg-app-surface border border-app-border shadow-organic rounded-[1.25rem] overflow-hidden">
                         <h2 className="font-outfit text-lg font-bold text-app-text mb-5 flex items-center gap-3">
                             <span className="w-5 h-5 rounded bg-brand-600/10 text-brand-600 flex items-center justify-center text-[10px] font-bold border border-brand-400/20">1</span>
                             Your Details
@@ -265,6 +333,7 @@ export default function CheckoutPage() {
                             )}
 
                             <div className="space-y-3.5 mb-6">
+                                {/* Full Name */}
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-widest text-app-text-muted mb-1.5">
                                         Full Name <span className="text-brand-500">*</span>
@@ -277,11 +346,10 @@ export default function CheckoutPage() {
                                         placeholder="John Doe"
                                         className={`w-full px-3.5 py-2.5 rounded-lg bg-app-bg border text-app-text placeholder-app-text-faint focus:bg-app-surface focus:ring-2 transition-all font-medium text-[13px] ${nameError ? 'border-red-400 focus:border-red-400 focus:ring-red-400/10' : 'border-app-border focus:border-brand-500 focus:ring-brand-500/10'}`}
                                     />
-                                    {nameError && (
-                                        <p className="mt-1.5 text-[11px] text-red-500 font-medium">{nameError}</p>
-                                    )}
+                                    {nameError && <p className="mt-1.5 text-[11px] text-red-500 font-medium">{nameError}</p>}
                                 </div>
 
+                                {/* Email */}
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-widest text-app-text-muted mb-1.5">
                                         Email Address <span className="text-brand-500">*</span>
@@ -290,15 +358,30 @@ export default function CheckoutPage() {
                                         type="email"
                                         required
                                         value={email}
-                                        onChange={e => setEmail(e.target.value)}
+                                        onChange={e => { setEmail(e.target.value); if (emailError) setEmailError('') }}
                                         placeholder="jane@example.com"
-                                        className="w-full px-3.5 py-2.5 rounded-lg bg-app-bg border border-app-border text-app-text placeholder-app-text-faint focus:bg-app-surface focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 transition-all font-medium text-[13px]"
+                                        className={`w-full px-3.5 py-2.5 rounded-lg bg-app-bg border text-app-text placeholder-app-text-faint focus:bg-app-surface focus:ring-2 transition-all font-medium text-[13px] ${emailError ? 'border-red-400 focus:border-red-400 focus:ring-red-400/10' : 'border-app-border focus:border-brand-500 focus:ring-brand-500/10'}`}
                                     />
-                                    <p className="text-[10px] font-medium text-app-text-faint mt-1.5 ml-1">
-                                        Tickets will be sent here.
-                                    </p>
+                                    <p className="text-[10px] font-medium text-app-text-faint mt-1.5 ml-1">Tickets will be sent here.</p>
                                 </div>
 
+                                {/* Repeat Email */}
+                                <div>
+                                    <label className="block text-[10px] font-bold uppercase tracking-widest text-app-text-muted mb-1.5">
+                                        Repeat Email <span className="text-brand-500">*</span>
+                                    </label>
+                                    <input
+                                        type="email"
+                                        required
+                                        value={repeatEmail}
+                                        onChange={e => { setRepeatEmail(e.target.value); if (emailError) setEmailError('') }}
+                                        placeholder="jane@example.com"
+                                        className={`w-full px-3.5 py-2.5 rounded-lg bg-app-bg border text-app-text placeholder-app-text-faint focus:bg-app-surface focus:ring-2 transition-all font-medium text-[13px] ${emailError ? 'border-red-400 focus:border-red-400 focus:ring-red-400/10' : 'border-app-border focus:border-brand-500 focus:ring-brand-500/10'}`}
+                                    />
+                                    {emailError && <p className="mt-1.5 text-[11px] text-red-500 font-medium">{emailError}</p>}
+                                </div>
+
+                                {/* Phone */}
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-widest text-app-text-muted mb-1.5">
                                         Phone Number <span className="text-brand-500">*</span>
@@ -313,6 +396,232 @@ export default function CheckoutPage() {
                                     />
                                 </div>
                             </div>
+
+                            {/* ── Event Waiver (Terms & Conditions) ─────────────── */}
+                            {event?.terms?.has_terms && <div className="mb-6 pt-5 border-t border-app-border">
+                                <h2 className="font-outfit text-sm font-bold text-app-text mb-4 flex items-center gap-3">
+                                    <span className="w-5 h-5 rounded bg-brand-600/10 text-brand-600 flex items-center justify-center text-[10px] font-bold border border-brand-400/20">2</span>
+                                    Event Waiver
+                                </h2>
+
+                                {/* Agree checkbox + view terms toggle */}
+                                <div className="flex items-center gap-2.5 mb-3">
+                                    <label className="flex items-center gap-2.5 cursor-pointer flex-1">
+                                        <div className="relative shrink-0">
+                                            <input
+                                                type="checkbox"
+                                                checked={termsAccepted}
+                                                onChange={e => setTermsAccepted(e.target.checked)}
+                                                className="sr-only peer"
+                                            />
+                                            <div className="w-4 h-4 rounded border-2 border-app-border bg-app-bg peer-checked:bg-brand-600 peer-checked:border-brand-600 transition-colors flex items-center justify-center">
+                                                {termsAccepted && (
+                                                    <svg width="9" height="7" viewBox="0 0 9 7" fill="none">
+                                                        <path d="M1 3.5L3.5 6L8 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                                    </svg>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <span className="text-[13px] font-semibold text-app-text">
+                                            I agree to the event waiver <span className="text-brand-500">*</span>
+                                        </span>
+                                    </label>
+                                    {termsHtml && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setTermsExpanded(p => !p)}
+                                            className="flex items-center gap-1 text-[11px] font-semibold text-brand-600 hover:text-brand-700 transition-colors shrink-0"
+                                        >
+                                            {termsExpanded ? 'Hide' : 'View'}
+                                            <ChevronDown size={12} className={`transition-transform ${termsExpanded ? 'rotate-180' : ''}`} />
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* Scrollable terms text — hidden by default */}
+                                {termsHtml && termsExpanded && (
+                                    <div className="w-full max-w-full mb-3 rounded-lg border border-app-border bg-app-bg overflow-hidden">
+                                        <div
+                                            className="h-40 overflow-y-auto p-3.5 text-[12px] text-app-text-muted leading-relaxed break-all"
+                                            dangerouslySetInnerHTML={{ __html: termsHtml }}
+                                        />
+                                    </div>
+                                )}
+
+                                {/* Signature button / accepted state */}
+                                {signatureError && (
+                                    <p className="text-[11px] text-red-500 font-medium mb-2">{signatureError}</p>
+                                )}
+                                {signatureAccepted ? (
+                                    <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                                        <div className="flex items-center gap-2 text-emerald-700">
+                                            <Check size={14} />
+                                            <span className="text-[13px] font-semibold">Signature added</span>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => { setSigModalOpen(true); setSignatureAccepted(false); setSignatureDataUrl(null); setHasSigned(false) }}
+                                            className="text-[12px] text-app-text-muted hover:text-app-text underline transition-colors"
+                                        >
+                                            Change
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        onClick={() => setSigModalOpen(true)}
+                                        className="flex items-center gap-2 rounded-full border border-brand-400 text-brand-600 px-5 py-2 text-[13px] font-semibold hover:bg-brand-50 transition-colors"
+                                    >
+                                        <PenLine size={14} /> Add your signature
+                                    </button>
+                                )}
+
+                                {/* ── Signature Modal ── */}
+                                {sigModalOpen && createPortal(
+                                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                                        <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={() => setSigModalOpen(false)} />
+                                        <div className="relative bg-app-surface border border-app-border rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+                                            {/* Header */}
+                                            <div className="flex items-center justify-between px-6 py-4 border-b border-app-border">
+                                                <h3 className="text-base font-bold text-app-text">Signature</h3>
+                                                <button type="button" onClick={() => setSigModalOpen(false)} className="p-1.5 rounded-lg hover:bg-app-surface-2 transition-colors text-app-text-muted">
+                                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                                                </button>
+                                            </div>
+
+                                            {/* Tabs */}
+                                            <div className="flex gap-1.5 px-6 pt-4">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setSignatureTab('draw'); setSignatureError('') }}
+                                                    className={`flex-1 py-1.5 rounded-md text-[12px] font-semibold border transition-colors ${signatureTab === 'draw' ? 'border-app-text bg-app-text text-app-surface' : 'border-app-border text-app-text-muted bg-app-bg hover:bg-app-surface-2'}`}
+                                                >
+                                                    Draw
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => { setSignatureTab('type'); setSignatureError('') }}
+                                                    className={`flex-1 py-1.5 rounded-md text-[12px] font-semibold border transition-colors ${signatureTab === 'type' ? 'border-app-text bg-app-text text-app-surface' : 'border-app-border text-app-text-muted bg-app-bg hover:bg-app-surface-2'}`}
+                                                >
+                                                    Type
+                                                </button>
+                                            </div>
+
+                                            {/* Body */}
+                                            <div className="px-6 pt-3 pb-5">
+                                                {signatureTab === 'draw' ? (
+                                                    <>
+                                                        <p className="text-[12px] text-app-text-muted mb-1.5">Please sign below:</p>
+                                                        <div className="relative rounded-lg border border-app-border bg-app-bg overflow-hidden">
+                                                            <canvas
+                                                                ref={canvasRef}
+                                                                width={600}
+                                                                height={180}
+                                                                className="w-full touch-none cursor-crosshair"
+                                                                onMouseDown={startDraw}
+                                                                onMouseMove={draw}
+                                                                onMouseUp={stopDraw}
+                                                                onMouseLeave={stopDraw}
+                                                                onTouchStart={e => {
+                                                                    e.preventDefault()
+                                                                    const pos = getTouchPos(canvasRef.current, e.touches[0])
+                                                                    const ctx = canvasRef.current.getContext('2d')
+                                                                    isDrawingRef.current = true
+                                                                    ctx.beginPath()
+                                                                    ctx.moveTo(pos.x, pos.y)
+                                                                }}
+                                                                onTouchMove={e => {
+                                                                    e.preventDefault()
+                                                                    if (!isDrawingRef.current) return
+                                                                    const pos = getTouchPos(canvasRef.current, e.touches[0])
+                                                                    const ctx = canvasRef.current.getContext('2d')
+                                                                    ctx.lineWidth = 2
+                                                                    ctx.lineCap = 'round'
+                                                                    ctx.strokeStyle = '#1a1817'
+                                                                    ctx.lineTo(pos.x, pos.y)
+                                                                    ctx.stroke()
+                                                                    setHasSigned(true)
+                                                                }}
+                                                                onTouchEnd={stopDraw}
+                                                            />
+                                                            {!hasSigned && (
+                                                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                                                    <span className="text-[12px] text-app-text-faint">Draw your signature here</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <p className="text-[12px] text-app-text-muted mb-1.5">Type your full name:</p>
+                                                        <input
+                                                            type="text"
+                                                            value={typedSignature}
+                                                            onChange={e => setTypedSignature(e.target.value)}
+                                                            placeholder="Your full name"
+                                                            autoFocus
+                                                            className="w-full rounded-lg border border-app-border bg-app-bg px-3.5 py-2.5 text-[13px] text-app-text placeholder:text-app-text-faint focus:outline-none focus:border-app-border"
+                                                        />
+                                                    </>
+                                                )}
+
+                                                {/* Modal actions */}
+                                                <div className="flex items-center gap-2.5 mt-4">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            clearCanvas()
+                                                            setTypedSignature('')
+                                                        }}
+                                                        className="flex-1 py-2 rounded-full border border-app-border text-[12px] font-semibold text-app-text-muted hover:bg-app-surface-2 transition-colors"
+                                                    >
+                                                        Clear
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (signatureTab === 'draw') {
+                                                                if (!hasSigned) {
+                                                                    setSignatureError('Please draw your signature.')
+                                                                    return
+                                                                }
+                                                                const canvas = canvasRef.current
+                                                                setSignatureDataUrl(canvas.toDataURL('image/png'))
+                                                            } else {
+                                                                if (!typedSignature.trim()) {
+                                                                    setSignatureError('Please type your name.')
+                                                                    return
+                                                                }
+                                                                // Render typed name to PNG
+                                                                const tc = document.createElement('canvas')
+                                                                tc.width = 600; tc.height = 130
+                                                                const ctx = tc.getContext('2d')
+                                                                ctx.fillStyle = '#ffffff'
+                                                                ctx.fillRect(0, 0, tc.width, tc.height)
+                                                                ctx.fillStyle = '#1a1817'
+                                                                ctx.font = 'italic 38px Georgia, "Times New Roman", serif'
+                                                                ctx.textAlign = 'center'
+                                                                ctx.textBaseline = 'middle'
+                                                                ctx.fillText(typedSignature.trim(), tc.width / 2, tc.height / 2)
+                                                                setSignatureDataUrl(tc.toDataURL('image/png'))
+                                                            }
+                                                            setSignatureError('')
+                                                            setSignatureAccepted(true)
+                                                            setSigModalOpen(false)
+                                                        }}
+                                                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full bg-app-text text-app-surface text-[12px] font-bold hover:opacity-90 transition-opacity"
+                                                    >
+                                                        <Check size={13} /> Accept
+                                                    </button>
+                                                </div>
+                                                {signatureError && (
+                                                    <p className="text-[11px] text-red-500 font-medium mt-2 text-center">{signatureError}</p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                , document.body)}
+                            </div>}
 
                             <div className="pt-5 border-t border-app-border">
                                 <button
@@ -340,7 +649,6 @@ export default function CheckoutPage() {
 
                         <div className="p-5 border-b border-app-border bg-app-surface">
                             <h3 className="font-outfit text-base font-bold text-app-text mb-3 line-clamp-2">{event.name}</h3>
-
                             <div className="space-y-1.5 text-xs font-medium text-app-text-muted">
                                 {dateStr && (
                                     <div className="flex items-center gap-2">
@@ -365,25 +673,21 @@ export default function CheckoutPage() {
 
                         <div className="p-5">
                             <h4 className="text-[10px] font-bold uppercase tracking-widest text-app-text-faint mb-4">Summary</h4>
-
                             <div className="space-y-3.5 mb-5">
                                 {tickets.map(t => {
-                                    const qty = selectedTickets[t.id];
-                                    const price = (t.price || 0) / 100;
+                                    const qty = selectedTickets[t.id]
+                                    const price = (t.price || 0) / 100
                                     return (
                                         <div key={t.id} className="flex justify-between gap-4">
                                             <div className="flex-1">
                                                 <p className="font-outfit font-bold text-app-text text-[13px] mb-0.5">{t.name}</p>
                                                 <p className="text-[10px] font-medium text-app-text-muted">${price.toFixed(2)} x {qty}</p>
                                             </div>
-                                            <div className="text-right">
-                                                <span className="font-outfit font-bold text-sm text-app-text">${(price * qty).toFixed(2)}</span>
-                                            </div>
+                                            <span className="font-outfit font-bold text-sm text-app-text">${(price * qty).toFixed(2)}</span>
                                         </div>
                                     )
                                 })}
                             </div>
-
                             <div className="bg-app-surface rounded-lg p-3.5 border border-app-border mt-4 flex items-center justify-between shadow-sm">
                                 <span className="font-bold text-app-text text-[13px]">Total</span>
                                 <span className="font-outfit font-black text-xl text-brand-600">${totalPrice.toFixed(2)}</span>
@@ -394,92 +698,5 @@ export default function CheckoutPage() {
 
             </div>
         </div>
-
-        {/* ── Terms & Conditions Modal ─────────────────────────── */}
-        {showTerms && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-                <div
-                    className="absolute inset-0 bg-black/50 backdrop-blur-sm"
-                    onClick={() => setShowTerms(false)}
-                />
-                <div className="relative bg-app-surface border border-app-border rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col">
-
-                    {/* Header */}
-                    <div className="flex items-center justify-between p-5 border-b border-app-border shrink-0">
-                        <div>
-                            <h2 className="font-outfit text-lg font-bold text-app-text">Booking Terms</h2>
-                            <p className="text-[11px] text-app-text-muted mt-0.5">Please read before proceeding to payment</p>
-                        </div>
-                        <button
-                            onClick={() => setShowTerms(false)}
-                            className="w-8 h-8 flex items-center justify-center rounded-lg text-app-text-muted hover:text-app-text hover:bg-app-surface-2 transition-colors"
-                        >✕</button>
-                    </div>
-
-                    {/* Body */}
-                    <div className="overflow-y-auto p-5 space-y-4">
-
-                        <div className="flex gap-3">
-                            <span className="text-xl shrink-0">🚫</span>
-                            <div>
-                                <p className="font-bold text-app-text text-[13px] mb-1">No Refunds</p>
-                                <p className="text-[12px] text-app-text-muted leading-relaxed">
-                                    All ticket sales are <strong>final and non-refundable</strong> once payment is confirmed. Tickets cannot be cancelled or exchanged except where required by law or if the event is cancelled by the organiser.
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="flex gap-3">
-                            <span className="text-xl shrink-0">💳</span>
-                            <div>
-                                <p className="font-bold text-app-text text-[13px] mb-1">Payment Authorisation</p>
-                                <p className="text-[12px] text-app-text-muted leading-relaxed">
-                                    By proceeding, you authorise a charge of <strong>${totalPrice.toFixed(2)}</strong> to your payment method. Payments are processed securely via Stripe.
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="flex gap-3">
-                            <span className="text-xl shrink-0">📧</span>
-                            <div>
-                                <p className="font-bold text-app-text text-[13px] mb-1">Ticket Delivery</p>
-                                <p className="text-[12px] text-app-text-muted leading-relaxed">
-                                    Tickets will be sent to <strong>{email}</strong>. Please ensure this is correct — we cannot resend to a different address after purchase.
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="flex gap-3">
-                            <span className="text-xl shrink-0">📋</span>
-                            <div>
-                                <p className="font-bold text-app-text text-[13px] mb-1">Event Changes</p>
-                                <p className="text-[12px] text-app-text-muted leading-relaxed">
-                                    If the event is cancelled or significantly changed by the organiser, refund eligibility is determined by the organiser's policy.
-                                </p>
-                            </div>
-                        </div>
-
-                    </div>
-
-                    {/* Footer */}
-                    <div className="p-5 border-t border-app-border shrink-0 space-y-2.5">
-                        <button
-                            onClick={handleAcceptTerms}
-                            disabled={processing}
-                            className="w-full bg-app-text text-app-surface font-bold py-3 rounded-xl text-[13px] hover:bg-[#1A1817] transition-colors shadow-organic disabled:opacity-50 disabled:pointer-events-none"
-                        >
-                            {totalPrice === 0 ? 'I Accept — Get Free Ticket' : 'I Accept — Continue to Payment'}
-                        </button>
-                        <button
-                            onClick={() => setShowTerms(false)}
-                            className="w-full text-app-text-muted text-[12px] font-medium py-2 hover:text-app-text transition-colors"
-                        >
-                            Cancel
-                        </button>
-                    </div>
-                </div>
-            </div>
-        )}
-        </>
     )
 }
