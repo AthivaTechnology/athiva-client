@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import SignatureCanvas from 'react-signature-canvas'
 import { useSearchParams, useNavigate, Link } from 'react-router-dom'
 import axios from 'axios'
 import {
@@ -67,15 +68,14 @@ export default function CheckoutPage() {
     const submittingRef = useRef(false)
 
     // Signature state
-    const canvasRef = useRef(null)
-    const isDrawingRef = useRef(false)
-    const [hasSigned, setHasSigned] = useState(false)
+    const sigPadRef = useRef(null)
+    const hasDrawnRef = useRef(false)
     const [signatureError, setSignatureError] = useState('')
     const [signatureTab, setSignatureTab] = useState('draw') // 'draw' | 'type'
     const [typedSignature, setTypedSignature] = useState('')
     const [sigModalOpen, setSigModalOpen] = useState(false)
-    const [signatureAccepted, setSignatureAccepted] = useState(false) // true after Accept in modal
-    const [signatureDataUrl, setSignatureDataUrl] = useState(null) // captured PNG at Accept time
+    const [signatureAccepted, setSignatureAccepted] = useState(false)
+    const [signatureDataUrl, setSignatureDataUrl] = useState(null)
 
     // Pre-fill form fields from a stored session
     useEffect(() => {
@@ -126,39 +126,6 @@ export default function CheckoutPage() {
             .catch(() => setCheckoutError('Failed to load event details.'))
             .finally(() => setLoading(false))
     }, [eventId, selectedTickets, navigate])
-
-    // ── Canvas drawing helpers ────────────────────────────────────────────────
-    const startDraw = (e) => {
-        isDrawingRef.current = true
-        const ctx = canvasRef.current.getContext('2d')
-        ctx.beginPath()
-        ctx.moveTo(e.nativeEvent.offsetX, e.nativeEvent.offsetY)
-    }
-    const draw = (e) => {
-        if (!isDrawingRef.current) return
-        const ctx = canvasRef.current.getContext('2d')
-        ctx.lineWidth = 2
-        ctx.lineCap = 'round'
-        ctx.strokeStyle = '#1a1817'
-        ctx.lineTo(e.nativeEvent.offsetX, e.nativeEvent.offsetY)
-        ctx.stroke()
-        setHasSigned(true)
-        if (signatureError) setSignatureError('')
-    }
-    const stopDraw = () => { isDrawingRef.current = false }
-
-    const getTouchPos = (canvas, touch) => {
-        const rect = canvas.getBoundingClientRect()
-        return { x: touch.clientX - rect.left, y: touch.clientY - rect.top }
-    }
-
-    const clearCanvas = () => {
-        const canvas = canvasRef.current
-        if (!canvas) return
-        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height)
-        setHasSigned(false)
-        setSignatureError('')
-    }
 
     // Validate → call API → redirect to Stripe
     const handleCheckout = async (e) => {
@@ -460,7 +427,7 @@ export default function CheckoutPage() {
                                         </div>
                                         <button
                                             type="button"
-                                            onClick={() => { setSigModalOpen(true); setSignatureAccepted(false); setSignatureDataUrl(null); setHasSigned(false) }}
+                                            onClick={() => { hasDrawnRef.current = false; setSigModalOpen(true); setSignatureAccepted(false); setSignatureDataUrl(null) }}
                                             className="text-[12px] text-app-text-muted hover:text-app-text underline transition-colors"
                                         >
                                             Change
@@ -469,158 +436,13 @@ export default function CheckoutPage() {
                                 ) : (
                                     <button
                                         type="button"
-                                        onClick={() => setSigModalOpen(true)}
+                                        onClick={() => { hasDrawnRef.current = false; setSigModalOpen(true) }}
                                         className="flex items-center gap-2 rounded-full border border-brand-400 text-brand-600 px-5 py-2 text-[13px] font-semibold hover:bg-brand-50 transition-colors"
                                     >
                                         <PenLine size={14} /> Add your signature
                                     </button>
                                 )}
 
-                                {/* ── Signature Modal ── */}
-                                {sigModalOpen && createPortal(
-                                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                                        <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={() => setSigModalOpen(false)} />
-                                        <div className="relative bg-app-surface border border-app-border rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
-                                            {/* Header */}
-                                            <div className="flex items-center justify-between px-6 py-4 border-b border-app-border">
-                                                <h3 className="text-base font-bold text-app-text">Signature</h3>
-                                                <button type="button" onClick={() => setSigModalOpen(false)} className="p-1.5 rounded-lg hover:bg-app-surface-2 transition-colors text-app-text-muted">
-                                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
-                                                </button>
-                                            </div>
-
-                                            {/* Tabs */}
-                                            <div className="flex gap-1.5 px-6 pt-4">
-                                                <button
-                                                    type="button"
-                                                    onClick={() => { setSignatureTab('draw'); setSignatureError('') }}
-                                                    className={`flex-1 py-1.5 rounded-md text-[12px] font-semibold border transition-colors ${signatureTab === 'draw' ? 'border-app-text bg-app-text text-app-surface' : 'border-app-border text-app-text-muted bg-app-bg hover:bg-app-surface-2'}`}
-                                                >
-                                                    Draw
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={() => { setSignatureTab('type'); setSignatureError('') }}
-                                                    className={`flex-1 py-1.5 rounded-md text-[12px] font-semibold border transition-colors ${signatureTab === 'type' ? 'border-app-text bg-app-text text-app-surface' : 'border-app-border text-app-text-muted bg-app-bg hover:bg-app-surface-2'}`}
-                                                >
-                                                    Type
-                                                </button>
-                                            </div>
-
-                                            {/* Body */}
-                                            <div className="px-6 pt-3 pb-5">
-                                                {signatureTab === 'draw' ? (
-                                                    <>
-                                                        <p className="text-[12px] text-app-text-muted mb-1.5">Please sign below:</p>
-                                                        <div className="relative rounded-lg border border-app-border bg-app-bg overflow-hidden">
-                                                            <canvas
-                                                                ref={canvasRef}
-                                                                width={600}
-                                                                height={180}
-                                                                className="w-full touch-none cursor-crosshair"
-                                                                onMouseDown={startDraw}
-                                                                onMouseMove={draw}
-                                                                onMouseUp={stopDraw}
-                                                                onMouseLeave={stopDraw}
-                                                                onTouchStart={e => {
-                                                                    e.preventDefault()
-                                                                    const pos = getTouchPos(canvasRef.current, e.touches[0])
-                                                                    const ctx = canvasRef.current.getContext('2d')
-                                                                    isDrawingRef.current = true
-                                                                    ctx.beginPath()
-                                                                    ctx.moveTo(pos.x, pos.y)
-                                                                }}
-                                                                onTouchMove={e => {
-                                                                    e.preventDefault()
-                                                                    if (!isDrawingRef.current) return
-                                                                    const pos = getTouchPos(canvasRef.current, e.touches[0])
-                                                                    const ctx = canvasRef.current.getContext('2d')
-                                                                    ctx.lineWidth = 2
-                                                                    ctx.lineCap = 'round'
-                                                                    ctx.strokeStyle = '#1a1817'
-                                                                    ctx.lineTo(pos.x, pos.y)
-                                                                    ctx.stroke()
-                                                                    setHasSigned(true)
-                                                                }}
-                                                                onTouchEnd={stopDraw}
-                                                            />
-                                                            {!hasSigned && (
-                                                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                                                    <span className="text-[12px] text-app-text-faint">Draw your signature here</span>
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <p className="text-[12px] text-app-text-muted mb-1.5">Type your full name:</p>
-                                                        <input
-                                                            type="text"
-                                                            value={typedSignature}
-                                                            onChange={e => setTypedSignature(e.target.value)}
-                                                            placeholder="Your full name"
-                                                            autoFocus
-                                                            className="w-full rounded-lg border border-app-border bg-app-bg px-3.5 py-2.5 text-[13px] text-app-text placeholder:text-app-text-faint focus:outline-none focus:border-app-border"
-                                                        />
-                                                    </>
-                                                )}
-
-                                                {/* Modal actions */}
-                                                <div className="flex items-center gap-2.5 mt-4">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            clearCanvas()
-                                                            setTypedSignature('')
-                                                        }}
-                                                        className="flex-1 py-2 rounded-full border border-app-border text-[12px] font-semibold text-app-text-muted hover:bg-app-surface-2 transition-colors"
-                                                    >
-                                                        Clear
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => {
-                                                            if (signatureTab === 'draw') {
-                                                                if (!hasSigned) {
-                                                                    setSignatureError('Please draw your signature.')
-                                                                    return
-                                                                }
-                                                                const canvas = canvasRef.current
-                                                                setSignatureDataUrl(canvas.toDataURL('image/png'))
-                                                            } else {
-                                                                if (!typedSignature.trim()) {
-                                                                    setSignatureError('Please type your name.')
-                                                                    return
-                                                                }
-                                                                // Render typed name to PNG
-                                                                const tc = document.createElement('canvas')
-                                                                tc.width = 600; tc.height = 130
-                                                                const ctx = tc.getContext('2d')
-                                                                ctx.fillStyle = '#ffffff'
-                                                                ctx.fillRect(0, 0, tc.width, tc.height)
-                                                                ctx.fillStyle = '#1a1817'
-                                                                ctx.font = 'italic 38px Georgia, "Times New Roman", serif'
-                                                                ctx.textAlign = 'center'
-                                                                ctx.textBaseline = 'middle'
-                                                                ctx.fillText(typedSignature.trim(), tc.width / 2, tc.height / 2)
-                                                                setSignatureDataUrl(tc.toDataURL('image/png'))
-                                                            }
-                                                            setSignatureError('')
-                                                            setSignatureAccepted(true)
-                                                            setSigModalOpen(false)
-                                                        }}
-                                                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full bg-app-text text-app-surface text-[12px] font-bold hover:opacity-90 transition-opacity"
-                                                    >
-                                                        <Check size={13} /> Accept
-                                                    </button>
-                                                </div>
-                                                {signatureError && (
-                                                    <p className="text-[11px] text-red-500 font-medium mt-2 text-center">{signatureError}</p>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                , document.body)}
                             </div>}
 
                             <div className="pt-5 border-t border-app-border">
@@ -640,6 +462,148 @@ export default function CheckoutPage() {
                                 </button>
                             </div>
                         </form>
+
+                        {/* ── Signature Modal — outside the form so clicks never bubble to onSubmit ── */}
+                        {event?.terms?.has_terms && sigModalOpen && createPortal(
+                            <div
+                                className="fixed inset-0 z-50 flex items-center justify-center p-4"
+                                onKeyDown={e => e.stopPropagation()}
+                                onClick={e => e.stopPropagation()}
+                            >
+                                <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={() => setSigModalOpen(false)} />
+                                <div className="relative bg-app-surface border border-app-border rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+                                    {/* Header */}
+                                    <div className="flex items-center justify-between px-6 py-4 border-b border-app-border">
+                                        <h3 className="text-base font-bold text-app-text">Signature</h3>
+                                        <button type="button" onClick={() => setSigModalOpen(false)} className="p-1.5 rounded-lg hover:bg-app-surface-2 transition-colors text-app-text-muted">
+                                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                                        </button>
+                                    </div>
+
+                                    {/* Tabs */}
+                                    <div className="flex gap-1.5 px-6 pt-4">
+                                        <button
+                                            type="button"
+                                            onClick={() => { setSignatureTab('draw'); setSignatureError('') }}
+                                            className={`flex-1 py-1.5 rounded-md text-[12px] font-semibold border transition-colors ${signatureTab === 'draw' ? 'border-app-text bg-app-text text-app-surface' : 'border-app-border text-app-text-muted bg-app-bg hover:bg-app-surface-2'}`}
+                                        >
+                                            Draw
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => { setSignatureTab('type'); setSignatureError('') }}
+                                            className={`flex-1 py-1.5 rounded-md text-[12px] font-semibold border transition-colors ${signatureTab === 'type' ? 'border-app-text bg-app-text text-app-surface' : 'border-app-border text-app-text-muted bg-app-bg hover:bg-app-surface-2'}`}
+                                        >
+                                            Type
+                                        </button>
+                                    </div>
+
+                                    {/* Body */}
+                                    <div className="px-6 pt-3 pb-5">
+                                        {signatureTab === 'draw' ? (
+                                            <>
+                                                <p className="text-[12px] text-app-text-muted mb-1.5">Please sign below:</p>
+                                                <div className="rounded-lg border border-app-border bg-white overflow-hidden">
+                                                    <SignatureCanvas
+                                                        ref={sigPadRef}
+                                                        penColor="#1a1817"
+                                                        canvasProps={{
+                                                            width: 400,
+                                                            height: 160,
+                                                            style: { width: '100%', height: '160px', touchAction: 'none', display: 'block' }
+                                                        }}
+                                                        dotSize={1.5}
+                                                        minWidth={1}
+                                                        maxWidth={2.5}
+                                                        velocityFilterWeight={0.7}
+                                                        onBegin={() => setSignatureError('')}
+                                                        onEnd={() => { hasDrawnRef.current = true }}
+                                                    />
+                                                </div>
+                                                <p className="text-[11px] text-app-text-faint mt-1">Use your mouse or finger to sign</p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <p className="text-[12px] text-app-text-muted mb-1.5">Type your full name:</p>
+                                                <input
+                                                    type="text"
+                                                    value={typedSignature}
+                                                    onChange={e => setTypedSignature(e.target.value)}
+                                                    placeholder="Your full name"
+                                                    autoFocus
+                                                    className="w-full rounded-lg border border-app-border bg-app-bg px-3.5 py-2.5 text-[13px] text-app-text placeholder:text-app-text-faint focus:outline-none focus:border-app-border"
+                                                    onKeyDown={e => e.key === 'Enter' && e.preventDefault()}
+                                                />
+                                                {typedSignature && (
+                                                    <p
+                                                        className="mt-3 text-center text-[22px] text-app-text border-b border-dashed border-app-border pb-2"
+                                                        style={{ fontFamily: 'Dancing Script, Georgia, cursive' }}
+                                                    >
+                                                        {typedSignature}
+                                                    </p>
+                                                )}
+                                            </>
+                                        )}
+
+                                        {/* Modal actions */}
+                                        <div className="flex items-center gap-2.5 mt-4">
+                                            <button
+                                                type="button"
+                                                onClick={e => {
+                                                    e.preventDefault()
+                                                    e.stopPropagation()
+                                                    if (signatureTab === 'draw') { sigPadRef.current?.clear(); hasDrawnRef.current = false }
+                                                    else setTypedSignature('')
+                                                    setSignatureError('')
+                                                }}
+                                                className="flex-1 py-2 rounded-full border border-app-border text-[12px] font-semibold text-app-text-muted hover:bg-app-surface-2 transition-colors"
+                                            >
+                                                Clear
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={e => {
+                                                    e.preventDefault()
+                                                    e.stopPropagation()
+                                                    if (signatureTab === 'draw') {
+                                                        if (!sigPadRef.current || !hasDrawnRef.current) {
+                                                            setSignatureError('Please draw your signature.')
+                                                            return
+                                                        }
+                                                        setSignatureDataUrl(sigPadRef.current.toDataURL('image/png'))
+                                                    } else {
+                                                        if (!typedSignature.trim()) {
+                                                            setSignatureError('Please type your name.')
+                                                            return
+                                                        }
+                                                        const tc = document.createElement('canvas')
+                                                        tc.width = 600; tc.height = 130
+                                                        const ctx = tc.getContext('2d')
+                                                        ctx.fillStyle = '#ffffff'
+                                                        ctx.fillRect(0, 0, tc.width, tc.height)
+                                                        ctx.fillStyle = '#1a1817'
+                                                        ctx.font = 'italic 38px Georgia, "Times New Roman", serif'
+                                                        ctx.textAlign = 'center'
+                                                        ctx.textBaseline = 'middle'
+                                                        ctx.fillText(typedSignature.trim(), tc.width / 2, tc.height / 2)
+                                                        setSignatureDataUrl(tc.toDataURL('image/png'))
+                                                    }
+                                                    setSignatureError('')
+                                                    setSignatureAccepted(true)
+                                                    setSigModalOpen(false)
+                                                }}
+                                                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-full bg-app-text text-app-surface text-[12px] font-bold hover:opacity-90 transition-opacity"
+                                            >
+                                                <Check size={13} /> Accept
+                                            </button>
+                                        </div>
+                                        {signatureError && (
+                                            <p className="text-[11px] text-red-500 font-medium mt-2 text-center">{signatureError}</p>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        , document.body)}
                     </div>
                 </div>
 
