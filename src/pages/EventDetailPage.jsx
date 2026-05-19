@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, Link, useNavigate, useSearchParams } from 'react-router-dom'
 import axios from 'axios'
-import { ArrowLeft, CalendarDays, MapPin, Ticket, Clock, Users, ExternalLink, AlertCircle, Plus, Minus, ChevronDown } from 'lucide-react'
+import { ArrowLeft, CalendarDays, MapPin, Ticket, Clock, Users, ExternalLink, AlertCircle, Plus, Minus, ChevronDown, Package } from 'lucide-react'
 import { API_ENDPOINTS } from '../config/api'
 import {
     CHECKOUT_SESSION_TTL_MS,
@@ -67,6 +67,9 @@ export default function EventDetailPage() {
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
     const [selectedTickets, setSelectedTickets] = useState({})
+    const [products, setProducts] = useState([])
+    const [selectedProducts, setSelectedProducts] = useState({})
+    const [step, setStep] = useState('tickets') // 'tickets' | 'products'
 
     const descriptionRef = useRef(null)
     const [showScrollIndicator, setShowScrollIndicator] = useState(false)
@@ -120,19 +123,35 @@ export default function EventDetailPage() {
         });
     }
 
+    const handleProductChange = (productId, delta, available) => {
+        setSelectedProducts(prev => {
+            const current = prev[productId] || 0
+            const maxAllowed = available != null ? available : 99
+            const next = Math.max(0, Math.min(maxAllowed, current + delta))
+            if (next === 0) {
+                const copy = { ...prev }
+                delete copy[productId]
+                return copy
+            }
+            return { ...prev, [productId]: next }
+        })
+    }
+
     useEffect(() => {
         restoreTicketsFromSession()
 
-        axios.get(API_ENDPOINTS.event(eventId))
-            .then(({ data }) => {
-                setEvent(data)
-                if (data?.name) document.title = data.name
-            })
-            .catch((err) => {
-                if (err.response?.status === 404) navigate('/')
-                else setError('Failed to load event. Please try again.')
-            })
-            .finally(() => setLoading(false))
+        Promise.all([
+            axios.get(API_ENDPOINTS.event(eventId)),
+            axios.get(API_ENDPOINTS.eventProducts(eventId)).catch(() => ({ data: [] })),
+        ]).then(([eventRes, productsRes]) => {
+            const data = eventRes.data
+            setEvent(data)
+            if (data?.name) document.title = data.name
+            setProducts(Array.isArray(productsRes.data) ? productsRes.data : [])
+        }).catch((err) => {
+            if (err.response?.status === 404) navigate('/')
+            else setError('Failed to load event. Please try again.')
+        }).finally(() => setLoading(false))
 
         return () => { document.title = 'Events' }
     }, [eventId, navigate, restoreTicketsFromSession])
@@ -282,8 +301,8 @@ export default function EventDetailPage() {
                 {/* Main column */}
                 <div className="md:col-span-7 lg:col-span-8 space-y-10 animate-fade-up-delay-1">
 
-                    {/* Ticket Tiers */}
-                    {event.ticket_types?.length > 0 && (
+                    {/* Ticket Tiers — only visible on step 1 */}
+                    {step === 'tickets' && event.ticket_types?.length > 0 && (
                         <div className="space-y-6">
                             <div>
                                 <h2 className="font-outfit text-2xl font-bold text-app-text">Select Tickets</h2>
@@ -366,6 +385,84 @@ export default function EventDetailPage() {
                                                     </div>
                                                 </div>
                                             )}
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Products — only visible on step 2 */}
+                    {step === 'products' && products.length > 0 && (
+                        <div className="space-y-6">
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={() => setStep('tickets')}
+                                    className="flex items-center gap-1.5 text-app-text-muted hover:text-app-text text-[10px] font-bold uppercase tracking-[0.15em] transition-colors group"
+                                >
+                                    <ArrowLeft size={12} className="group-hover:-translate-x-1 transition-transform" /> Back
+                                </button>
+                                <h2 className="font-outfit text-2xl font-bold text-app-text">Add-ons</h2>
+                            </div>
+                            <div className="space-y-4">
+                                {products.map((p) => {
+                                    const available = p.quantity_available != null ? p.quantity_available : (p.quantity != null ? p.quantity : null)
+                                    const isSoldOut = available != null && available <= 0
+
+                                    return (
+                                        <div key={p.id} className="group bg-app-surface border border-app-border p-4 rounded-[1.25rem] hover:border-brand-400/40 hover:shadow-organic transition-all duration-300 relative overflow-hidden">
+                                            {isSoldOut && (
+                                                <div className="absolute inset-0 bg-app-surface-2/50 pointer-events-none" />
+                                            )}
+                                            <div className="flex gap-4 items-start relative z-10">
+                                                {p.image_url && (
+                                                    <img src={p.image_url} alt={p.name}
+                                                        className="w-16 h-16 rounded-xl object-cover shrink-0 border border-app-border" />
+                                                )}
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                                        <div className="flex-1">
+                                                            <p className="font-outfit text-base font-bold text-app-text mb-1 group-hover:text-brand-600 transition-colors">
+                                                                {p.name}
+                                                            </p>
+                                                            {p.description && (
+                                                                <p className="text-xs text-app-text-muted line-clamp-2">{p.description}</p>
+                                                            )}
+                                                            <div className="flex flex-wrap items-center gap-2 mt-1.5 text-[10px] uppercase tracking-wider font-bold">
+                                                                {isSoldOut ? (
+                                                                    <span className="text-red-500 bg-red-50 px-2 py-0.5 rounded">Sold Out</span>
+                                                                ) : available != null && available <= 10 ? (
+                                                                    <span className="text-amber-600 bg-amber-50 px-2 py-0.5 rounded">Last {available}</span>
+                                                                ) : null}
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center justify-between sm:justify-end gap-4 shrink-0">
+                                                            <p className={`font-outfit text-xl font-black ${p.price > 0 ? 'text-app-text' : 'text-emerald-700'}`}>
+                                                                {p.price > 0 ? `$${(p.price / 100).toFixed(2)}` : 'FREE'}
+                                                            </p>
+                                                            {!isSoldOut && (
+                                                                <div className="flex items-center gap-1.5 bg-app-surface-2 rounded-lg p-1 border border-app-border/50">
+                                                                    <button type="button"
+                                                                        onClick={() => handleProductChange(p.id, -1, available)}
+                                                                        disabled={(selectedProducts[p.id] || 0) <= 0}
+                                                                        className="w-7 h-7 rounded-md flex items-center justify-center bg-app-surface border border-app-border text-app-text-muted hover:text-app-text hover:bg-app-surface-2 disabled:opacity-30 transition-all shadow-sm"
+                                                                    >
+                                                                        <Minus size={14} />
+                                                                    </button>
+                                                                    <span className="font-outfit font-bold text-[13px] w-5 text-center text-app-text">{selectedProducts[p.id] || 0}</span>
+                                                                    <button type="button"
+                                                                        onClick={() => handleProductChange(p.id, 1, available)}
+                                                                        disabled={available != null && (selectedProducts[p.id] || 0) >= available}
+                                                                        className="w-7 h-7 rounded-md flex items-center justify-center bg-app-surface border border-app-border text-app-text-muted hover:text-app-text hover:bg-app-surface-2 disabled:opacity-30 transition-all shadow-sm"
+                                                                    >
+                                                                        <Plus size={14} />
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
                                     )
                                 })}
@@ -463,35 +560,97 @@ export default function EventDetailPage() {
                                 const avail = tt.quantity_available != null ? tt.quantity_available : Math.max(0, cap - (tt.quantity_sold || 0))
                                 return avail <= 0 && cap > 0
                             })
-                            return (
-                                <div className="relative z-10">
-                                    {allSoldOut ? (
-                                        <div className="py-2 text-center text-white">
-                                            <p className="font-outfit text-lg font-bold mb-1">Sold Out</p>
-                                            <p className="text-white/60 text-xs">All tickets have been claimed</p>
-                                        </div>
-                                    ) : Object.keys(selectedTickets).length > 0 ? (
-                                        <div className="space-y-4">
-                                            <div className="flex justify-between items-center bg-black/20 rounded-lg p-2.5 border border-white/10 text-white">
-                                                <span className="text-[13px] font-medium">{Object.values(selectedTickets).reduce((a, b) => a + b, 0)} tickets</span>
-                                                <span className="font-outfit text-base font-bold">${(Object.entries(selectedTickets).reduce((acc, [id, qty]) => {
-                                                    const t = event.ticket_types.find(x => x.id === id);
-                                                    return acc + (t ? (t.price || 0) * qty : 0);
-                                                }, 0) / 100).toFixed(2)}</span>
+                            const ticketCount = Object.values(selectedTickets).reduce((a, b) => a + b, 0)
+                            const productCount = Object.values(selectedProducts).reduce((a, b) => a + b, 0)
+                            const ticketSubtotal = Object.entries(selectedTickets).reduce((acc, [id, qty]) => {
+                                const t = event.ticket_types.find(x => x.id === id)
+                                return acc + (t ? (t.price || 0) * qty : 0)
+                            }, 0)
+                            const productSubtotal = Object.entries(selectedProducts).reduce((acc, [id, qty]) => {
+                                const p = products.find(x => x.id === id)
+                                return acc + (p ? (p.price || 0) * qty : 0)
+                            }, 0)
+                            const totalAmount = ticketSubtotal + productSubtotal
+                            const productsParam = productCount > 0
+                                ? `&products=${encodeURIComponent(JSON.stringify(selectedProducts))}`
+                                : ''
+
+                            // Step 1: ticket selection
+                            if (step === 'tickets') {
+                                return (
+                                    <div className="relative z-10">
+                                        {allSoldOut ? (
+                                            <div className="py-2 text-center text-white">
+                                                <p className="font-outfit text-lg font-bold mb-1">Sold Out</p>
+                                                <p className="text-white/60 text-xs">All tickets have been claimed</p>
                                             </div>
-                                            <Link
-                                                to={`/checkout?eventId=${eventId}&tickets=${encodeURIComponent(JSON.stringify(selectedTickets))}`}
-                                                className="block w-full text-center bg-app-surface text-app-text font-bold py-3 rounded-lg hover:bg-app-surface-2 transition-colors shadow-sm text-[13px]"
-                                            >
-                                                Checkout
-                                            </Link>
+                                        ) : ticketCount > 0 ? (
+                                            <div className="space-y-4">
+                                                <div className="flex justify-between items-center bg-black/20 rounded-lg p-2.5 border border-white/10 text-white">
+                                                    <span className="text-[13px] font-medium">{ticketCount} ticket{ticketCount !== 1 ? 's' : ''}</span>
+                                                    <span className="font-outfit text-base font-bold">${(ticketSubtotal / 100).toFixed(2)}</span>
+                                                </div>
+                                                {products.length > 0 ? (
+                                                    // Has products → show Next to go to add-ons step
+                                                    <button
+                                                        onClick={() => { setStep('products'); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
+                                                        className="block w-full text-center bg-app-surface text-app-text font-bold py-3 rounded-lg hover:bg-app-surface-2 transition-colors shadow-sm text-[13px]"
+                                                    >
+                                                        Next →
+                                                    </button>
+                                                ) : (
+                                                    // No products → go straight to checkout
+                                                    <Link
+                                                        to={`/checkout?eventId=${eventId}&tickets=${encodeURIComponent(JSON.stringify(selectedTickets))}`}
+                                                        className="block w-full text-center bg-app-surface text-app-text font-bold py-3 rounded-lg hover:bg-app-surface-2 transition-colors shadow-sm text-[13px]"
+                                                    >
+                                                        Checkout
+                                                    </Link>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <div className="py-2 text-center text-white">
+                                                <p className="font-outfit text-lg font-bold mb-1">Ready to book?</p>
+                                                <p className="text-white/60 text-xs">Select tickets to proceed</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                )
+                            }
+
+                            // Step 2: product (add-on) selection
+                            return (
+                                <div className="relative z-10 space-y-4">
+                                    <div className="space-y-1.5">
+                                        <div className="flex justify-between items-center bg-black/20 rounded-lg p-2.5 border border-white/10 text-white">
+                                            <span className="text-[13px] font-medium">{ticketCount} ticket{ticketCount !== 1 ? 's' : ''}</span>
+                                            <span className="font-outfit text-base font-bold">${(ticketSubtotal / 100).toFixed(2)}</span>
                                         </div>
-                                    ) : (
-                                        <div className="py-2 text-center text-white">
-                                            <p className="font-outfit text-lg font-bold mb-1">Ready to book?</p>
-                                            <p className="text-white/60 text-xs">Select tickets to proceed</p>
-                                        </div>
-                                    )}
+                                        {productCount > 0 && (
+                                            <div className="flex justify-between items-center bg-black/20 rounded-lg p-2.5 border border-white/10 text-white">
+                                                <span className="text-[13px] font-medium">{productCount} add-on{productCount !== 1 ? 's' : ''}</span>
+                                                <span className="font-outfit text-base font-bold">${(productSubtotal / 100).toFixed(2)}</span>
+                                            </div>
+                                        )}
+                                        {productCount > 0 && (
+                                            <div className="flex justify-between items-center px-2.5 pt-1 text-white/70">
+                                                <span className="text-[11px] font-medium">Total</span>
+                                                <span className="font-outfit text-sm font-bold text-white">${(totalAmount / 100).toFixed(2)}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <Link
+                                        to={`/checkout?eventId=${eventId}&tickets=${encodeURIComponent(JSON.stringify(selectedTickets))}${productsParam}`}
+                                        className="block w-full text-center bg-app-surface text-app-text font-bold py-3 rounded-lg hover:bg-app-surface-2 transition-colors shadow-sm text-[13px]"
+                                    >
+                                        Checkout
+                                    </Link>
+                                    <button
+                                        onClick={() => setStep('tickets')}
+                                        className="block w-full text-center text-white/50 hover:text-white/80 text-[11px] transition-colors"
+                                    >
+                                        ← Back to tickets
+                                    </button>
                                 </div>
                             )
                         })() : (

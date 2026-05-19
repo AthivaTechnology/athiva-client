@@ -49,11 +49,17 @@ export default function CheckoutPage() {
 
     const eventId = searchParams.get('eventId')
     const ticketsParam = searchParams.get('tickets')
+    const productsParam = searchParams.get('products')
 
     const selectedTickets = useMemo(() => parseTicketSelection(ticketsParam), [ticketsParam])
+    const selectedProducts = useMemo(() => {
+        if (!productsParam) return {}
+        try { return JSON.parse(decodeURIComponent(productsParam)) } catch { return {} }
+    }, [productsParam])
 
     const [event, setEvent] = useState(null)
     const [tickets, setTickets] = useState([])
+    const [selectedProductDetails, setSelectedProductDetails] = useState([])
     const [loading, setLoading] = useState(true)
     const [name, setName] = useState('')
     const [email, setEmail] = useState('')
@@ -108,23 +114,35 @@ export default function CheckoutPage() {
             return
         }
 
-        axios.get(API_ENDPOINTS.event(eventId))
-            .then(({ data }) => {
-                setEvent(data)
-                if (data?.name) document.title = `Checkout — ${data.name}`
-                const selected = Object.keys(selectedTickets).map(id => {
-                    const t = (data.ticket_types || []).find(x => x.id === id)
-                    return t ? { ...t, quantity: selectedTickets[id] } : null
-                }).filter(Boolean)
+        Promise.all([
+            axios.get(API_ENDPOINTS.event(eventId)),
+            Object.keys(selectedProducts).length > 0
+                ? axios.get(API_ENDPOINTS.eventProducts(eventId)).catch(() => ({ data: [] }))
+                : Promise.resolve({ data: [] }),
+        ]).then(([eventRes, productsRes]) => {
+            const data = eventRes.data
+            setEvent(data)
+            if (data?.name) document.title = `Checkout — ${data.name}`
+            const selected = Object.keys(selectedTickets).map(id => {
+                const t = (data.ticket_types || []).find(x => x.id === id)
+                return t ? { ...t, quantity: selectedTickets[id] } : null
+            }).filter(Boolean)
 
-                if (selected.length === 0) {
-                    setCheckoutError('Selected tickets not found. They may have been removed.')
-                } else {
-                    setTickets(selected)
-                }
+            if (selected.length === 0) {
+                setCheckoutError('Selected tickets not found. They may have been removed.')
+            } else {
+                setTickets(selected)
+            }
+
+            // Resolve product details for summary display
+            const allProducts = Array.isArray(productsRes.data) ? productsRes.data : []
+            const prodDetails = Object.entries(selectedProducts).map(([id, qty]) => {
+                const p = allProducts.find(x => x.id === id)
+                return p ? { ...p, selectedQty: qty } : { id, name: id, price: 0, selectedQty: qty }
             })
-            .catch(() => setCheckoutError('Failed to load event details.'))
-            .finally(() => setLoading(false))
+            setSelectedProductDetails(prodDetails)
+        }).catch(() => setCheckoutError('Failed to load event details.'))
+          .finally(() => setLoading(false))
     }, [eventId, selectedTickets, navigate])
 
     // Validate → call API → redirect to Stripe
@@ -194,6 +212,11 @@ export default function CheckoutPage() {
 
             const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
 
+            const productItems = Object.entries(selectedProducts).map(([product_id, quantity]) => ({
+                product_id,
+                quantity,
+            }))
+
             const { data } = await axios.post(API_ENDPOINTS.checkoutCreate(), {
                 event_id: eventId,
                 items,
@@ -201,6 +224,7 @@ export default function CheckoutPage() {
                 customer_name: name,
                 customer_phone: phone,
                 customer_timezone: tz,
+                ...(productItems.length > 0 && { product_items: productItems }),
                 ...(hasTerms && { terms_accepted: true, terms_signature: termsSignature }),
             })
 
@@ -253,7 +277,9 @@ export default function CheckoutPage() {
         )
     }
 
-    const totalPrice = tickets.reduce((sum, t) => sum + ((t.price || 0) / 100 * selectedTickets[t.id]), 0)
+    const ticketTotal = tickets.reduce((sum, t) => sum + ((t.price || 0) / 100 * selectedTickets[t.id]), 0)
+    const productTotal = selectedProductDetails.reduce((sum, p) => sum + ((p.price || 0) / 100 * p.selectedQty), 0)
+    const totalPrice = ticketTotal + productTotal
 
     const formatTime12h = (timeStr) => {
         if (!timeStr) return ''
@@ -651,6 +677,23 @@ export default function CheckoutPage() {
                                         </div>
                                     )
                                 })}
+                                {selectedProductDetails.length > 0 && (
+                                    <div className="pt-3 border-t border-app-border/50 space-y-3">
+                                        <p className="text-[9px] font-bold uppercase tracking-widest text-app-text-faint">Add-ons</p>
+                                        {selectedProductDetails.map(p => {
+                                            const price = (p.price || 0) / 100
+                                            return (
+                                                <div key={p.id} className="flex justify-between gap-4">
+                                                    <div className="flex-1">
+                                                        <p className="font-outfit font-bold text-app-text text-[13px] mb-0.5">{p.name}</p>
+                                                        <p className="text-[10px] font-medium text-app-text-muted">${price.toFixed(2)} x {p.selectedQty}</p>
+                                                    </div>
+                                                    <span className="font-outfit font-bold text-sm text-app-text">${(price * p.selectedQty).toFixed(2)}</span>
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
+                                )}
                             </div>
                             <div className="bg-app-surface rounded-lg p-3.5 border border-app-border mt-4 flex items-center justify-between shadow-sm">
                                 <span className="font-bold text-app-text text-[13px]">Total</span>
