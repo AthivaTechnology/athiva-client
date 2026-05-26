@@ -52,10 +52,29 @@ export default function CheckoutPage() {
     const productsParam = searchParams.get('products')
 
     const selectedTickets = useMemo(() => parseTicketSelection(ticketsParam), [ticketsParam])
+
+    // When the browser back button is used from Stripe, the URL may lose the products= param.
+    // Fall back to the stored session's productsParam so the summary stays correct,
+    // but only when the session matches this exact event + ticket selection.
+    // Compare parsed ticket objects (not raw strings) to tolerate whitespace differences in the URL.
+    const effectiveProductsParam = useMemo(() => {
+        if (productsParam != null) return productsParam
+        const session = readCheckoutSession()
+        if (session?.eventId === eventId && session.productsParam != null) {
+            try {
+                const sessionTickets = parseTicketSelection(session.ticketsParam)
+                const sameTickets =
+                    Object.keys(selectedTickets).length === Object.keys(sessionTickets).length &&
+                    Object.entries(selectedTickets).every(([id, qty]) => sessionTickets[id] === qty)
+                if (sameTickets) return session.productsParam
+            } catch {}
+        }
+        return null
+    }, [productsParam, eventId, selectedTickets])
     const selectedProducts = useMemo(() => {
-        if (!productsParam) return {}
-        try { return JSON.parse(decodeURIComponent(productsParam)) } catch { return {} }
-    }, [productsParam])
+        if (!effectiveProductsParam) return {}
+        try { return JSON.parse(decodeURIComponent(effectiveProductsParam)) } catch { return {} }
+    }, [effectiveProductsParam])
 
     const [event, setEvent] = useState(null)
     const [tickets, setTickets] = useState([])
@@ -155,7 +174,7 @@ export default function CheckoutPage() {
 
         // Resume existing Stripe session if tickets unchanged and not expired
         const session = readCheckoutSession()
-        if (session?.eventId === eventId && session.stripeUrl && session.ticketsParam === ticketsParam && (session.productsParam ?? null) === (productsParam ?? null)) {
+        if (session?.eventId === eventId && session.stripeUrl && session.ticketsParam === ticketsParam && (session.productsParam ?? null) === (effectiveProductsParam ?? null)) {
             const expiresAt = session.expiresAt ? new Date(session.expiresAt) : null
             if (expiresAt && expiresAt > new Date()) {
                 window.location.href = session.stripeUrl
@@ -234,7 +253,7 @@ export default function CheckoutPage() {
             if (!data.url) throw new Error('No redirect URL received from server.')
 
             const expiresAt = new Date(Date.now() + CHECKOUT_SESSION_TTL_MS).toISOString()
-            saveCheckoutSession({ eventId, ticketsParam, productsParam: productsParam ?? null, stripeUrl: data.url, name, email, phone, expiresAt })
+            saveCheckoutSession({ eventId, ticketsParam, productsParam: effectiveProductsParam ?? null, stripeUrl: data.url, name, email, phone, expiresAt })
 
             window.location.href = data.url
         } catch (err) {

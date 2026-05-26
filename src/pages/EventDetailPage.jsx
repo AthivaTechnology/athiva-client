@@ -97,6 +97,19 @@ export default function EventDetailPage() {
         setSelectedTickets(prev => (
             Object.keys(prev).length > 0 ? prev : restored
         ))
+
+        // Restore selected products from session (saved when user first went to checkout)
+        if (sessionState.session.productsParam) {
+            try {
+                const restoredProducts = JSON.parse(sessionState.session.productsParam)
+                if (restoredProducts && typeof restoredProducts === 'object' && Object.keys(restoredProducts).length > 0) {
+                    setSelectedProducts(prev => (
+                        Object.keys(prev).length > 0 ? prev : restoredProducts
+                    ))
+                    setStep('products')
+                }
+            } catch {}
+        }
     }, [eventId])
 
     const handleQuantityChange = (ttId, delta, available, maxPerOrder) => {
