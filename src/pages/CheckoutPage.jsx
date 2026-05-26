@@ -114,6 +114,8 @@ export default function CheckoutPage() {
         if (session.name) setName(session.name)
         if (session.email) { setEmail(session.email); setRepeatEmail(session.email) }
         if (session.phone) setPhone(session.phone)
+        if (session.termsAccepted) setTermsAccepted(true)
+        if (session.signatureDataUrl) { setSignatureDataUrl(session.signatureDataUrl); setSignatureAccepted(true) }
     }, [eventId])
 
     // Reset processing state when restoring from bfcache (Back from Stripe)
@@ -253,7 +255,14 @@ export default function CheckoutPage() {
             if (!data.url) throw new Error('No redirect URL received from server.')
 
             const expiresAt = new Date(Date.now() + CHECKOUT_SESSION_TTL_MS).toISOString()
-            saveCheckoutSession({ eventId, ticketsParam, productsParam: effectiveProductsParam ?? null, stripeUrl: data.url, name, email, phone, expiresAt })
+            saveCheckoutSession({
+                eventId, ticketsParam, productsParam: effectiveProductsParam ?? null,
+                stripeUrl: data.url, name, email, phone, expiresAt,
+                ...(hasTerms && {
+                    termsAccepted: true,
+                    signatureDataUrl: termsSignature ?? null,
+                }),
+            })
 
             window.location.href = data.url
         } catch (err) {
