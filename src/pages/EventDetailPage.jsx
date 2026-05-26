@@ -149,7 +149,8 @@ export default function EventDetailPage() {
             if (data?.name) document.title = data.name
             setProducts(Array.isArray(productsRes.data) ? productsRes.data : [])
         }).catch((err) => {
-            if (err.response?.status === 404) navigate('/')
+            if (err.response?.status === 403) navigate('/')
+            else if (err.response?.status === 404) navigate('/')
             else setError('Failed to load event. Please try again.')
         }).finally(() => setLoading(false))
 

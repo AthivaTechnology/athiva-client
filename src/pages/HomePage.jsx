@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import axios from 'axios'
 import {
     CalendarDays, MapPin, Clock, Search,
-    Ticket, ChevronDown, Zap
+    Ticket, ChevronDown, Zap, AlertCircle
 } from 'lucide-react'
 import { API_ENDPOINTS } from '../config/api'
 import { formatDate, getStatusStyle, getLowestPrice } from '../utils/format'
@@ -48,6 +48,7 @@ export default function HomePage() {
     const [clientName, setClientName] = useState('')
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState('')
+    const [siteDisabled, setSiteDisabled] = useState(false)
     const [search, setSearch] = useState('')
     const eventsRef = useRef(null)
 
@@ -60,7 +61,15 @@ export default function HomePage() {
                     document.title = `Events — ${data.client_name}`
                 }
             })
-            .catch(() => setError('Failed to load events. Please try again.'))
+            .catch((err) => {
+                if (err.response?.status === 403) {
+                    setSiteDisabled(true)
+                } else if (err.response?.status === 404) {
+                    setError(err.response?.data?.detail || 'This domain is not registered with our platform.')
+                } else {
+                    setError('Failed to load events. Please try again.')
+                }
+            })
             .finally(() => setLoading(false))
         return () => { document.title = 'Events' }
     }, [])
@@ -111,7 +120,24 @@ export default function HomePage() {
                 <div className="max-w-6xl mx-auto px-6">
                     {loading && <HomeSkeleton />}
 
-                    {error && (
+                    {siteDisabled && (
+                        <div className="text-center py-20 max-w-md mx-auto">
+                            <div className="w-16 h-16 mx-auto mb-5 bg-amber-50 rounded-2xl flex items-center justify-center border border-amber-200">
+                                <AlertCircle size={32} className="text-amber-500" />
+                            </div>
+                            <h2 className="font-outfit text-2xl font-bold text-app-text mb-3">
+                                Site Unavailable
+                            </h2>
+                            <p className="text-app-text-muted text-sm leading-relaxed mb-2">
+                                This site has been temporarily disabled by the administrator.
+                            </p>
+                            <p className="text-app-text-faint text-xs">
+                                Please check back later or contact support for more information.
+                            </p>
+                        </div>
+                    )}
+
+                    {error && !siteDisabled && (
                         <div className="text-center py-12 bg-red-50 border border-red-100 rounded-2xl max-w-lg mx-auto">
                             <p className="text-red-500 font-medium text-sm">{error}</p>
                         </div>

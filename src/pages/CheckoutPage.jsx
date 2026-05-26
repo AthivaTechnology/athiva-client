@@ -141,7 +141,10 @@ export default function CheckoutPage() {
                 return p ? { ...p, selectedQty: qty } : { id, name: id, price: 0, selectedQty: qty }
             })
             setSelectedProductDetails(prodDetails)
-        }).catch(() => setCheckoutError('Failed to load event details.'))
+        }).catch((err) => {
+            if (err.response?.status === 403 || err.response?.status === 404) navigate('/')
+            else setCheckoutError('Failed to load event details.')
+        })
           .finally(() => setLoading(false))
     }, [eventId, selectedTickets, navigate])
 

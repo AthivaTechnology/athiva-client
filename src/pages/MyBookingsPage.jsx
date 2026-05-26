@@ -25,7 +25,10 @@ export default function MyBookingsPage() {
         setSubmitted(email.trim())
         axios.get(API_ENDPOINTS.bookings(email.trim()))
             .then(({ data }) => setBookings(data.bookings || []))
-            .catch(() => setError('Could not load bookings. Please check your email and try again.'))
+            .catch((err) => {
+                if (err.response?.status === 403) setError('This site has been temporarily disabled by the administrator. Please check back later.')
+                else setError('Could not load bookings. Please check your email and try again.')
+            })
             .finally(() => setLoading(false))
     }
 
